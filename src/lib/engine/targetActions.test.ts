@@ -87,4 +87,28 @@ describe('decideTargetAction', () => {
     const r = decideTargetAction(baseInput({ clicks: 20, orders: 3, spend: 12, sales: 90, acos: 12 / 90, productEconomics: economics(0.6), settings }));
     expect(r.recommendedBid).toBeCloseTo(0.5 * 1.02, 2);
   });
+
+  // Exact production-audit case: Vanilla "body butter" — 11 clicks, $9.23 spend,
+  // 0 orders, $1.00 bid. Must be WATCH, not REDUCE_BID (spend is under $15).
+  it('audit case: 11 clicks, $9.23 spend, 0 orders, $1.00 bid -> WATCH (not REDUCE_BID)', () => {
+    const r = decideTargetAction(baseInput({ clicks: 11, orders: 0, spend: 9.23, currentBid: 1.0, productId: 'vanilla' }));
+    expect(r.action).toBe('WATCH');
+    expect(r.currentBid).toBe(1.0);
+    expect(r.recommendedBid).toBe(1.0); // WATCH must not change the bid
+  });
+
+  it('boundary: exactly $8.00 spend with 0 orders is WATCH, not WAIT', () => {
+    const r = decideTargetAction(baseInput({ clicks: 6, orders: 0, spend: 8.0 }));
+    expect(r.action).toBe('WATCH');
+  });
+
+  it('boundary: exactly $15.00 spend with 0 orders is still WATCH, not REDUCE_BID', () => {
+    const r = decideTargetAction(baseInput({ clicks: 6, orders: 0, spend: 15.0 }));
+    expect(r.action).toBe('WATCH');
+  });
+
+  it('boundary: $15.01 spend with 0 orders crosses into REDUCE_BID', () => {
+    const r = decideTargetAction(baseInput({ clicks: 6, orders: 0, spend: 15.01 }));
+    expect(r.action).toBe('REDUCE_BID');
+  });
 });

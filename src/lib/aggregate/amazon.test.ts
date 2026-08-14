@@ -6,6 +6,8 @@ import type { CampaignRow, Product, TargetingRow } from '../../types';
 const products: Product[] = [
   { id: 'rose', name: 'Rose', asin: 'B0GZVBBRZP', sku: '', sellingPrice: null, aliases: ['rose'], campaignAliases: [], adGroupAliases: [] },
   { id: 'coconut', name: 'Coconut', asin: 'B0GZVGXXS2', sku: '', sellingPrice: null, aliases: ['coconut'], campaignAliases: [], adGroupAliases: [] },
+  { id: 'vanilla', name: 'Vanilla', asin: 'B0H28WG6BB', sku: '', sellingPrice: null, aliases: ['vanilla'], campaignAliases: [], adGroupAliases: [] },
+  { id: 'mango', name: 'Mango', asin: 'B0GZVP9HRB', sku: '', sellingPrice: null, aliases: ['mango'], campaignAliases: [], adGroupAliases: [] },
 ];
 
 const idx: MappingIndexes = { products, advertisedProductIndex: buildAdvertisedProductIndex([]), savedMappings: [] };
@@ -46,6 +48,54 @@ describe('duplicate keyword/product differentiation', () => {
     expect(new Set(targets.map((t) => t.key)).size).toBe(2); // distinct keys despite identical keyword text
     expect(targets.find((t) => t.campaign.startsWith('Rose'))?.productName).toBe('Rose');
     expect(targets.find((t) => t.campaign.startsWith('Coconut'))?.productName).toBe('Coconut');
+  });
+
+  it('keeps "body butter" distinct across all four products (Rose, Coconut, Mango, Vanilla)', () => {
+    const rows: TargetingRow[] = ['Rose', 'Coconut', 'Mango', 'Vanilla'].map((name) => ({
+      campaign: `${name} - Sponsored Products`,
+      adGroup: `${name} AG`,
+      targetingText: 'body butter',
+      matchType: 'exact',
+      bid: 0.4,
+      impressions: 100,
+      clicks: 5,
+      spend: 2,
+      orders: 0,
+      sales: 0,
+    }));
+    const targets = buildBaseTargets(rows, idx, null, null);
+    expect(targets).toHaveLength(4);
+    expect(new Set(targets.map((t) => t.key)).size).toBe(4);
+    const byProduct = new Map(targets.map((t) => [t.productName, t]));
+    expect(byProduct.get('Rose')?.campaign).toBe('Rose - Sponsored Products');
+    expect(byProduct.get('Coconut')?.campaign).toBe('Coconut - Sponsored Products');
+    expect(byProduct.get('Mango')?.campaign).toBe('Mango - Sponsored Products');
+    expect(byProduct.get('Vanilla')?.campaign).toBe('Vanilla - Sponsored Products');
+  });
+});
+
+describe('low-confidence (name-inferred) mappings never drive economics decisions (never silently guess)', () => {
+  it('does not attribute a product to a campaign from a weak name-only match', () => {
+    // "Rose" only appears via generic name inference (no ASIN/SKU/alias/saved mapping) — must stay unmapped.
+    const rows: CampaignRow[] = [
+      { campaign: 'Rosewood Everyday Promo', impressions: 100, clicks: 5, spend: 2, orders: 0, sales: 0 },
+    ];
+    const roseOnly: Product[] = [{ id: 'rose', name: 'Rose', asin: 'X', sku: '', sellingPrice: null, aliases: [], campaignAliases: [], adGroupAliases: [] }];
+    const campaigns = buildEnrichedCampaigns(rows, { products: roseOnly, advertisedProductIndex: buildAdvertisedProductIndex([]), savedMappings: [] }, null, null);
+    // "Rosewood" contains "Rose" as a substring, so name inference technically fires, but low confidence must block attribution.
+    expect(campaigns[0].productId).toBeNull();
+    expect(campaigns[0].productName).toBeNull();
+  });
+
+  it('does not attribute a product to a target from a weak name-only match', () => {
+    const rows: TargetingRow[] = [
+      { campaign: 'Rosewood Everyday Promo', adGroup: 'Generic AG', targetingText: 'gift set', matchType: 'broad', bid: 0.3, impressions: 50, clicks: 2, spend: 1, orders: 0, sales: 0 },
+    ];
+    const roseOnly: Product[] = [{ id: 'rose', name: 'Rose', asin: 'X', sku: '', sellingPrice: null, aliases: [], campaignAliases: [], adGroupAliases: [] }];
+    const targets = buildBaseTargets(rows, { products: roseOnly, advertisedProductIndex: buildAdvertisedProductIndex([]), savedMappings: [] }, null, null);
+    expect(targets[0].productId).toBeNull();
+    expect(targets[0].productName).toBeNull();
+    expect(targets[0].mappingConfident).toBe(false);
   });
 });
 

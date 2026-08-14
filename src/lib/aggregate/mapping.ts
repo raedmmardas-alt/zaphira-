@@ -26,12 +26,21 @@ function norm(s: string | null | undefined): string {
   return (s ?? '').toLowerCase().trim();
 }
 
+function escapeRegExp(s: string): string {
+  return s.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+}
+
+// True word/phrase-boundary containment — plain substring `includes` would
+// let alias "rose" false-positive-match inside "Rosewood", "Primrose", etc.,
+// and (being treated as a confident, operator-approved match) silently
+// attribute an unrelated campaign's spend/sales to the wrong product.
 function containsAsWord(haystack: string, needle: string): boolean {
   if (!needle) return false;
   const h = norm(haystack);
   const n = norm(needle);
   if (!n) return false;
-  return h.includes(n);
+  const pattern = new RegExp(`(?:^|[^a-z0-9])${escapeRegExp(n)}(?:$|[^a-z0-9])`, 'i');
+  return pattern.test(h);
 }
 
 // Resolves a campaign/ad-group/target row to a product using the mandated

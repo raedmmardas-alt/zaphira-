@@ -46,7 +46,11 @@ export function buildBaseTargets(
 ): BaseEnrichedTarget[] {
   return rows.map((r) => {
     const mapping = resolveProductMapping({ asin: r.asin, sku: r.sku, campaign: r.campaign, adGroup: r.adGroup }, mappingIdx);
-    const product = mappingIdx.products.find((p) => p.id === mapping.productId) ?? null;
+    // A weak (low-confidence) name-inferred match must never be presented as
+    // a mapping — "never silently guess if confidence is weak". Only a
+    // confident mapping populates productId/productName; everything else
+    // (including NAME_INFERENCE) surfaces as PRODUCT MAPPING REQUIRED.
+    const product = mapping.confident ? mappingIdx.products.find((p) => p.id === mapping.productId) ?? null : null;
     const rowRange: DateRange | null = r.activityStart && r.activityEnd ? { start: r.activityStart, end: r.activityEnd } : null;
     const isCurrent = classifyPeriod(rowRange, reportRange, currentPeriod);
     return {
@@ -55,7 +59,7 @@ export function buildBaseTargets(
       matchType: r.matchType,
       campaign: r.campaign,
       adGroup: r.adGroup,
-      productId: mapping.confident ? mapping.productId : mapping.productId, // productId kept even at low confidence for display; economics engine gates on confidence
+      productId: product?.id ?? null,
       productName: product?.name ?? null,
       asin: product?.asin ?? r.asin ?? null,
       mappingSource: mapping.source,
@@ -83,7 +87,10 @@ export function buildEnrichedCampaigns(
 ): Omit<EnrichedCampaign, 'recommendation' | 'risk' | 'confidence'>[] {
   return campaignRows.map((r) => {
     const mapping = resolveProductMapping({ campaign: r.campaign }, mappingIdx);
-    const product = mappingIdx.products.find((p) => p.id === mapping.productId) ?? null;
+    // Only a confident mapping may drive a campaign's product attribution —
+    // a low-confidence guess must not silently unlock an economics-based
+    // recommendation (it would otherwise bypass the BLOCKED/mapping-required path).
+    const product = mapping.confident ? mappingIdx.products.find((p) => p.id === mapping.productId) ?? null : null;
     const rowRange: DateRange | null = r.activityStart && r.activityEnd ? { start: r.activityStart, end: r.activityEnd } : null;
     const isCurrent = classifyPeriod(rowRange, reportRange, currentPeriod);
     const statusConfidence: CampaignStatusConfidence =
@@ -120,7 +127,7 @@ export function buildBaseSearchTerms(
 ): Omit<EnrichedSearchTerm, 'classification'>[] {
   return rows.map((r) => {
     const mapping = resolveProductMapping({ asin: r.asin, sku: r.sku, campaign: r.campaign, adGroup: r.adGroup }, mappingIdx);
-    const product = mappingIdx.products.find((p) => p.id === mapping.productId) ?? null;
+    const product = mapping.confident ? mappingIdx.products.find((p) => p.id === mapping.productId) ?? null : null;
     const rowRange: DateRange | null = r.activityStart && r.activityEnd ? { start: r.activityStart, end: r.activityEnd } : null;
     const isCurrent = classifyPeriod(rowRange, reportRange, currentPeriod);
     return {

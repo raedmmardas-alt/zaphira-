@@ -68,4 +68,25 @@ describe('resolveProductMapping priority', () => {
     expect(r.productId).toBeNull();
     expect(r.confident).toBe(false);
   });
+
+  it('does NOT false-positive match an alias as a bare substring inside an unrelated word (e.g. "rose" inside "Rosewood")', () => {
+    // "Rosewood Everyday Promo" must not confidently attribute to the Rose product
+    // just because "rose" is a substring of "Rosewood" — this would silently
+    // misattribute an unrelated campaign's spend/sales to Rose's economics.
+    const r = resolveProductMapping({ campaign: 'Rosewood Everyday Promo', adGroup: 'Generic AG' }, idx({ savedMappings: [] }));
+    expect(r.source).toBe('UNMAPPED');
+    expect(r.productId).toBeNull();
+  });
+
+  it('does not false-positive match "mango" inside "Flamingo" or similar unrelated substrings', () => {
+    const mango: Product = { id: 'mango', name: 'Mango', asin: 'X', sku: '', sellingPrice: null, aliases: ['mango'], campaignAliases: [], adGroupAliases: [] };
+    const r = resolveProductMapping({ campaign: 'Flamingo Summer Sale', adGroup: 'Generic AG' }, idx({ products: [mango], savedMappings: [] }));
+    expect(r.source).toBe('UNMAPPED');
+  });
+
+  it('still matches an alias correctly at real word boundaries (punctuation, hyphens, start/end of string)', () => {
+    expect(resolveProductMapping({ campaign: 'Rose-Scented Gift Set', adGroup: '' }, idx({ savedMappings: [] })).productId).toBe('rose');
+    expect(resolveProductMapping({ campaign: 'Best Rose', adGroup: '' }, idx({ savedMappings: [] })).productId).toBe('rose');
+    expect(resolveProductMapping({ campaign: 'rose', adGroup: '' }, idx({ savedMappings: [] })).productId).toBe('rose');
+  });
 });
