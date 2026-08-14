@@ -33,10 +33,19 @@ export const FIELD_ALIASES: Record<string, string[]> = {
   orders: ['orders', '7 day total orders', 'total orders', 'orders new to brand', 'purchases'],
   sales: ['sales', '7 day total sales', 'total sales', 'attributed sales', 'sales usd'],
   budget: ['budget', 'daily budget', 'campaign budget amount'],
+  // "Search term" belongs to the Search Term report's canonical searchTerm
+  // field only. It must NOT also be listed under `keyword` below — aliases
+  // are resolved into a single reverse lookup, so a value duplicated across
+  // two canonical fields lets whichever field is declared later silently
+  // steal it, which previously broke Search Term report recognition.
   searchTerm: ['customer search term', 'search term'],
-  keyword: ['keyword', 'search term', 'target'],
-  asin: ['asin', 'advertised asin', 'product asin', 'child asin'],
-  sku: ['sku', 'advertised sku'],
+  keyword: ['keyword', 'target'],
+  // "Advertised product" is the current Amazon Advertised Product report's
+  // ASIN identifier column. Deliberately exact-match only — "Advertised
+  // product SKU/parent ID/marketplace/category" are distinct columns and
+  // must never collide with this alias (or with each other).
+  asin: ['asin', 'advertised asin', 'product asin', 'child asin', 'advertised product'],
+  sku: ['sku', 'advertised sku', 'advertised product sku'],
   dateRange: ['date range', 'reporting range', 'date'],
   startDate: ['start date', 'report start date'],
   endDate: ['end date', 'report end date'],
