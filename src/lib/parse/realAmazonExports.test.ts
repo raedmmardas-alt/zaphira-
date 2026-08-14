@@ -138,4 +138,46 @@ describe('real Amazon Advertised Product report format', () => {
     expect(rows[0].asin).toBe('B0GZVBBRZP'); // not "PARENT123", "US", or "Beauty"
     expect(rows[0].sku).toBe('ROSE-001');
   });
+
+  it('parses the exact real-export header set — "Advertised product ID" (not "Advertised product") resolves to asin', () => {
+    // Verified against an actual current Amazon Advertised Product CSV export.
+    const realExport: RawParsedFile = {
+      headers: [
+        'Budget currency', 'Date range', 'Campaign ID', 'Campaign name', 'Ad group ID', 'Ad group name',
+        'Advertised product ID', 'Advertised product name', 'Advertised product parent ID', 'Advertised product brand',
+        'Advertised product category', 'Advertised product subcategory', 'Advertised product group', 'Advertised product SKU',
+        'Advertised product marketplace', 'Impressions', 'Clicks', 'CTR', 'Total cost', 'Purchases', 'Sales',
+      ],
+      rows: [{
+        'Budget currency': 'USD', 'Date range': 'Aug 9-Aug 12, 2026', 'Campaign ID': 'C123', 'Campaign name': 'Coconut - Sponsored Products',
+        'Ad group ID': 'AG456', 'Ad group name': 'Coconut AG',
+        'Advertised product ID': 'B0GZVGXXS2', 'Advertised product name': 'Coconut Body Butter', 'Advertised product parent ID': 'PARENT789',
+        'Advertised product brand': 'Zaphira', 'Advertised product category': 'Beauty', 'Advertised product subcategory': 'Body Care',
+        'Advertised product group': 'Body Butters', 'Advertised product SKU': 'COCO-001', 'Advertised product marketplace': 'US',
+        Impressions: '3000', Clicks: '25', CTR: '0.83%', 'Total cost': '18.00', Purchases: '0', Sales: '0',
+      }],
+    };
+
+    const { meta, rows } = importAdvertisedProductReport(FILE, realExport);
+    expect(meta.status).not.toBe('FORMAT_NOT_RECOGNIZED');
+    expect(meta.missingRequiredFields).not.toContain('asin');
+    expect(meta.missingRequiredFields).toHaveLength(0);
+    expect(rows).toHaveLength(1);
+
+    // The required assertion: "Advertised product ID" -> asin, exact value.
+    expect(rows[0].asin).toBe('B0GZVGXXS2');
+
+    // Preserve SKU, and make sure none of the other "Advertised product ..."
+    // columns (name/parent ID/marketplace/brand/category/subcategory/group)
+    // ever leak into the asin or sku fields.
+    expect(rows[0].sku).toBe('COCO-001');
+    expect(rows[0].asin).not.toBe('PARENT789');
+    expect(rows[0].asin).not.toBe('US');
+    expect(rows[0].asin).not.toBe('Coconut Body Butter');
+
+    // Preceding fixes remain intact on this same real header set.
+    expect(rows[0].spend).toBe(18.0);
+    expect(rows[0].activityStart).toBe('2026-08-09');
+    expect(rows[0].activityEnd).toBe('2026-08-12');
+  });
 });

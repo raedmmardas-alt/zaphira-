@@ -40,11 +40,13 @@ export const FIELD_ALIASES: Record<string, string[]> = {
   // steal it, which previously broke Search Term report recognition.
   searchTerm: ['customer search term', 'search term'],
   keyword: ['keyword', 'target'],
-  // "Advertised product" is the current Amazon Advertised Product report's
-  // ASIN identifier column. Deliberately exact-match only — "Advertised
-  // product SKU/parent ID/marketplace/category" are distinct columns and
-  // must never collide with this alias (or with each other).
-  asin: ['asin', 'advertised asin', 'product asin', 'child asin', 'advertised product'],
+  // "Advertised product ID" is the current Amazon Advertised Product
+  // report's ASIN identifier column (verified against a real export).
+  // Deliberately exact-match only — "Advertised product name/parent ID/
+  // brand/category/subcategory/group/marketplace" are distinct columns
+  // and must never collide with this alias (or with each other). Bare
+  // "Advertised product" is also kept for older/alternate export variants.
+  asin: ['asin', 'advertised asin', 'product asin', 'child asin', 'advertised product', 'advertised product id'],
   sku: ['sku', 'advertised sku', 'advertised product sku'],
   dateRange: ['date range', 'reporting range', 'date'],
   startDate: ['start date', 'report start date'],
