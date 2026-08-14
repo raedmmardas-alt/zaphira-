@@ -24,10 +24,15 @@ export function aggregateSellerboardProducts(rows: SellerboardProductRow[]): Pro
     // here — adding it would double count (failure mode #2/#3).
     const totalSales = salesOrganic + salesPpc;
 
-    const promotions = sum(groupRows, (r) => r.promotions);
-    const amazonFees = sum(groupRows, (r) => r.amazonFees);
-    const cogs = sum(groupRows, (r) => r.cogs);
-    const refundCost = sum(groupRows, (r) => r.refundCost);
+    // Sellerboard exports these cost columns as SIGNED values (negative =
+    // a cost). Subtracting an already-negative raw sum would flip a cost
+    // into income (e.g. AmazonFees -0.76, Ads spend 0 must net to -0.76,
+    // not 0 - (-0.76) = +0.76). Normalize to positive magnitudes explicitly
+    // before using them in the break-even/contribution subtraction below.
+    const promotions = Math.abs(sum(groupRows, (r) => r.promotions));
+    const amazonFees = Math.abs(sum(groupRows, (r) => r.amazonFees));
+    const cogs = Math.abs(sum(groupRows, (r) => r.cogs));
+    const refundCost = Math.abs(sum(groupRows, (r) => r.refundCost));
     // Ad spend may be stored as a negative "cost" column in some exports.
     const ppcSpend = Math.abs(sum(groupRows, (r) => r.adSpend));
     const units = sum(groupRows, (r) => r.units);
@@ -37,7 +42,17 @@ export function aggregateSellerboardProducts(rows: SellerboardProductRow[]): Pro
     // Break-even ACoS never subtracts PPC spend — PPC is what we're testing
     // against this margin, not a component of it.
     const breakEvenAcos = totalSales > 0 ? contributionBeforeAds / totalSales : null;
-    const netProfit = contributionBeforeAds - ppcSpend;
+
+    // Product Net Profit: prefer Sellerboard's own signed Net Profit total
+    // when the export includes that column — it is the authoritative final
+    // figure and must never be reconstructed from components when present.
+    // Only fall back to reconstructing it from contribution-before-ads minus
+    // PPC spend when Sellerboard did not supply a Net Profit column at all.
+    const hasNetProfitColumn = groupRows.some((r) => r.netProfit !== null && r.netProfit !== undefined);
+    const netProfit = hasNetProfitColumn
+      ? sum(groupRows, (r) => r.netProfit ?? 0)
+      : contributionBeforeAds - ppcSpend;
+
     const margin = totalSales > 0 ? netProfit / totalSales : null;
     const realAcos = totalSales > 0 ? ppcSpend / totalSales : null;
 

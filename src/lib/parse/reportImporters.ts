@@ -20,7 +20,7 @@ const OPTIONAL_FIELDS: Record<ReportType, string[]> = {
   targeting: ['matchType', 'bid', 'status', 'orders', 'sales', 'asin', 'sku', 'startDate', 'endDate', 'dateRange'],
   searchTerm: ['targetingText', 'matchType', 'orders', 'sales', 'asin', 'sku', 'startDate', 'endDate', 'dateRange'],
   advertisedProduct: ['sku', 'orders', 'sales', 'startDate', 'endDate', 'dateRange'],
-  sellerboardProduct: ['marketplace', 'date', 'salesOrganic', 'salesPpc', 'salesSponsoredProducts', 'promotions', 'amazonFees', 'cogs', 'refundCost', 'adSpend', 'units', 'orders'],
+  sellerboardProduct: ['marketplace', 'date', 'salesOrganic', 'salesPpc', 'salesSponsoredProducts', 'promotions', 'amazonFees', 'cogs', 'refundCost', 'adSpend', 'units', 'orders', 'netProfit'],
   sellerboardKeyword: ['asin', 'sku', 'orders', 'sales', 'spend', 'acos', 'startDate', 'endDate'],
 };
 
@@ -214,6 +214,7 @@ export function importSellerboardProductReport(file: { name: string; size: numbe
       adSpend: toNumber(r[map.adSpend]),
       units: toNumber(r[map.units]),
       orders: toNumber(r[map.orders]),
+      netProfit: map.netProfit ? toNullableNumber(r[map.netProfit]) : null,
     });
   }
   const filenameRange = parseFilenameDateRange(file.name);

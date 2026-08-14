@@ -63,6 +63,10 @@ export const FIELD_ALIASES: Record<string, string[]> = {
   adSpend: ['ads spend', 'ad spend', 'advertising cost', 'advertising spend'],
   units: ['units', 'units sold'],
   acos: ['acos'],
+  // Sellerboard's own already-signed final Net Profit total. When present,
+  // this is the authoritative source for Product Net Profit — it must never
+  // be reconstructed from components when Sellerboard has already computed it.
+  netProfit: ['net profit', 'netprofit'],
 };
 
 // Build reverse lookup once.

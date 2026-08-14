@@ -163,6 +163,9 @@ export interface SellerboardProductRow {
   salesOrganic: number;
   salesPpc: number;
   salesSponsoredProducts: number; // subset of PPC sales, must not be double counted
+  // Sellerboard exports these cost columns as SIGNED values (negative = a
+  // cost/expense). Raw sign is preserved here at parse time — normalization
+  // to positive cost magnitudes happens explicitly during aggregation.
   promotions: number;
   amazonFees: number;
   cogs: number;
@@ -170,6 +173,9 @@ export interface SellerboardProductRow {
   adSpend: number;
   units: number;
   orders: number;
+  // Sellerboard's own final signed Net Profit column, when the export
+  // includes it. null when the column is absent from this report.
+  netProfit: number | null;
 }
 
 export interface SellerboardKeywordRow {
