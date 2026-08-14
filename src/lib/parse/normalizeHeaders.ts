@@ -26,7 +26,10 @@ export const FIELD_ALIASES: Record<string, string[]> = {
   bid: ['bid', 'max bid', 'keyword bid'],
   impressions: ['impressions'],
   clicks: ['clicks'],
-  spend: ['spend', 'cost', 'amount spent', 'spend usd'],
+  // "Total cost" is the canonical PPC spend column in current Amazon
+  // Sponsored Products exports (Campaign, Targeting, Search Term, and
+  // Advertised Product reports all use this shared alias list).
+  spend: ['spend', 'cost', 'amount spent', 'spend usd', 'total cost'],
   orders: ['orders', '7 day total orders', 'total orders', 'orders new to brand', 'purchases'],
   sales: ['sales', '7 day total sales', 'total sales', 'attributed sales', 'sales usd'],
   budget: ['budget', 'daily budget', 'campaign budget amount'],
