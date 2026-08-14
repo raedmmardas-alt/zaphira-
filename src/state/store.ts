@@ -55,6 +55,7 @@ interface AppState {
   confirmReportPeriod: (type: ReportType, period: DateRange) => void;
   setAccountNetProfit: (period: DateRange, value: number) => void;
   saveShadowSnapshot: (s: ShadowSnapshot) => void;
+  saveShadowSnapshotBatch: (snapshots: ShadowSnapshot[]) => void;
   markShadowApplied: (id: string) => void;
   setDeliveryWorkflowStatus: (targetKey: string, status: DeliveryWorkflowStatus, currentPeriod: DateRange | null) => void;
   addManualKeyword: (keyword: string, productId: string | null) => void;
@@ -200,6 +201,14 @@ export const useAppStore = create<AppState>((set, get) => ({
 
   saveShadowSnapshot: (s) => {
     const next = [...get().shadowSnapshots, s];
+    set({ shadowSnapshots: next });
+    void localDb.set(DB_KEYS.shadowSnapshots, next);
+  },
+  saveShadowSnapshotBatch: (snapshots) => {
+    // Appends the whole batch in one atomic update — never overwrites
+    // previously saved snapshots, and avoids partial-write races that a
+    // loop of single saveShadowSnapshot calls could risk.
+    const next = [...get().shadowSnapshots, ...snapshots];
     set({ shadowSnapshots: next });
     void localDb.set(DB_KEYS.shadowSnapshots, next);
   },

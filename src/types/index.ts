@@ -373,11 +373,16 @@ export interface ShadowSnapshot {
   id: string;
   savedAt: string;
   reportPeriod: DateRange | null;
+  // Stable identity: productId/ASIN + campaign + ad group + target + match
+  // type, so identical keyword text across different products (e.g. "body
+  // butter" on Rose vs Coconut) never collides even if campaign/ad-group
+  // naming were ever shared across products.
   targetKey: string;
   targetingText: string;
   matchType: string;
   productId: string | null;
   productName: string | null;
+  asin: string | null;
   campaign: string;
   adGroup: string;
   currentBid: number | null;
@@ -385,6 +390,7 @@ export interface ShadowSnapshot {
   recommendedBid: number | null;
   risk: Risk;
   confidence: Confidence;
+  delivery: DeliveryStatus;
   beforeMetrics: {
     impressions: number;
     clicks: number;
@@ -392,6 +398,7 @@ export interface ShadowSnapshot {
     orders: number;
     sales: number;
     acos: number | null;
+    cvr: number | null;
   };
   appliedManually: boolean;
   appliedAt: string | null;

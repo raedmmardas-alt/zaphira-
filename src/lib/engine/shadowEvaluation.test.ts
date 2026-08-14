@@ -12,6 +12,7 @@ function snapshot(overrides: Partial<ShadowSnapshot>): ShadowSnapshot {
     matchType: 'exact',
     productId: 'rose',
     productName: 'Rose',
+    asin: 'A',
     campaign: 'campaign',
     adGroup: 'adgroup',
     currentBid: 0.5,
@@ -19,7 +20,8 @@ function snapshot(overrides: Partial<ShadowSnapshot>): ShadowSnapshot {
     recommendedBid: 0.45,
     risk: 'MEDIUM',
     confidence: 'MEDIUM',
-    beforeMetrics: { impressions: 1000, clicks: 30, spend: 20, orders: 0, sales: 0, acos: null },
+    delivery: 'HIGH_DELIVERY',
+    beforeMetrics: { impressions: 1000, clicks: 30, spend: 20, orders: 0, sales: 0, acos: null, cvr: 0 },
     appliedManually: false,
     appliedAt: null,
     ...overrides,
@@ -66,7 +68,7 @@ describe('evaluateShadowSnapshot', () => {
     const snap = snapshot({
       appliedManually: true,
       reportPeriod: { start: '2026-07-01', end: '2026-07-31' },
-      beforeMetrics: { impressions: 1000, clicks: 30, spend: 20, orders: 1, sales: 40, acos: 0.5 },
+      beforeMetrics: { impressions: 1000, clicks: 30, spend: 20, orders: 1, sales: 40, acos: 0.5, cvr: 1 / 30 },
     });
     const map = new Map([[snap.targetKey, target({ acos: 0.15, orders: 2, spend: 14, sales: 90, clicks: 35 })]]);
     const result = evaluateShadowSnapshot(snap, map, { start: '2026-08-01', end: '2026-08-31' });
