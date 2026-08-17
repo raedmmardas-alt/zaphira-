@@ -18,4 +18,5 @@ export const DB_KEYS = {
   shadowSnapshots: 'zaphira/shadowSnapshots',
   deliveryWorkflow: 'zaphira/deliveryWorkflow',
   manualKeywordHistory: 'zaphira/manualKeywordHistory',
+  productManualEconomics: 'zaphira/productManualEconomics',
 } as const;

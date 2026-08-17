@@ -10,11 +10,14 @@ import { useAppStore } from '../state/store';
 import { computeCpc, computeCtr, formatCurrency, formatNumber, formatPercent } from '../lib/engine/metrics';
 import { STRATEGY_LABEL } from '../lib/engine/strategy';
 import { rankNextDollarCandidates } from '../lib/engine/nextDollar';
+import { calculateProductEconomics } from '../lib/engine/productEconomicsManual';
+import { blankManualEconomics } from '../types';
 
 export function Dashboard() {
   const ws = useWorkspace();
   const settings = useAppStore((s) => s.settings);
   const products = useAppStore((s) => s.products);
+  const productManualEconomics = useAppStore((s) => s.productManualEconomics);
 
   const currentTargets = ws.targets.filter((t) => t.isCurrentPeriod);
   const attentionItems = currentTargets
@@ -88,6 +91,8 @@ export function Dashboard() {
             {ws.economics.map((e) => {
               const product = products.find((p) => p.id === e.productId);
               const strategy = ws.strategies.find((s) => s.productId === e.productId);
+              const manualInputs = product ? productManualEconomics[product.id] ?? blankManualEconomics(product.id) : null;
+              const manualResult = product && manualInputs ? calculateProductEconomics(product, manualInputs) : null;
               return (
                 <Card key={`${e.marketplace}-${e.asin}-${e.sku}`}>
                   <div className="flex items-center justify-between">
@@ -101,6 +106,17 @@ export function Dashboard() {
                     <div className="flex justify-between"><span>Net Profit</span><span className={`font-medium ${e.netProfit >= 0 ? 'text-positive-600' : 'text-negative-600'}`}>{formatCurrency(e.netProfit)}</span></div>
                     <div className="flex justify-between"><span>Real ACoS</span><span className="font-medium text-navy-900">{formatPercent(e.realAcos)}</span></div>
                     <div className="flex justify-between"><span>Break-even ACoS</span><span className="font-medium text-navy-900">{formatPercent(e.breakEvenAcos)}</span></div>
+                  </div>
+                  <div className="mt-3 space-y-1 border-t border-border-subtle pt-2 text-xs text-navy-600">
+                    <div className="text-[11px] font-semibold uppercase tracking-wide text-navy-400">Manual Product Economics</div>
+                    {manualResult?.complete ? (
+                      <>
+                        <div className="flex justify-between"><span>Break-even ACoS (manual)</span><span className="font-medium text-navy-900">{formatPercent(manualResult.breakEvenAcos)}</span></div>
+                        <div className="flex justify-between"><span>Target ACoS (manual)</span><span className="font-medium text-navy-900">{manualResult.targetAcos !== null ? formatPercent(manualResult.targetAcos) : 'Set target profit'}</span></div>
+                      </>
+                    ) : (
+                      <div className="text-navy-400">Economics incomplete{manualResult ? ` — missing: ${manualResult.missingFields.join(', ')}` : ''}</div>
+                    )}
                   </div>
                 </Card>
               );

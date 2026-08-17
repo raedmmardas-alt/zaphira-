@@ -215,6 +215,46 @@ export interface ProductEconomics {
 }
 
 // ---------------------------------------------------------------------------
+// Manual product economics (per-order inputs the operator enters directly —
+// distinct from the Sellerboard-derived ProductEconomics above. This feeds
+// the Product Economics section only; it does NOT feed the PPC
+// recommendation engine (decideTargetAction / decideCampaignRecommendation /
+// classifyProductStrategy), which continues to run on Sellerboard-derived
+// data exactly as before.
+// ---------------------------------------------------------------------------
+
+export interface ProductManualEconomicsInputs {
+  productId: string;
+  // Selling price is read from Product.sellingPrice (single source of
+  // truth, already editable in Settings) rather than duplicated here.
+  cogs: number | null;
+  // Amazon fees are never hard-coded — they vary by category/program and
+  // change over time. amazonFeesConfirmed must be explicitly checked by the
+  // operator before this product's calculations are treated as complete.
+  amazonFees: number | null;
+  amazonFeesConfirmed: boolean;
+  sellerFundedDiscount: number | null; // optional; defaults to 0 when unset
+  targetProfitPerOrder: number | null;
+  updatedAt: string;
+}
+
+export interface ProductEconomicsCalcResult {
+  productId: string;
+  // false when Selling Price, COGS, or confirmed Amazon Fees are missing —
+  // no calculated figures are shown in that case (never guessed).
+  complete: boolean;
+  missingFields: string[];
+  contributionBeforeAdvertising: number | null;
+  breakEvenCpa: number | null;
+  breakEvenAcos: number | null;
+  // These two additionally require Target Profit per Order — null (with
+  // "Set target profit") when that field alone is missing, even if the
+  // product is otherwise complete.
+  maxCpaForTargetProfit: number | null;
+  targetAcos: number | null;
+}
+
+// ---------------------------------------------------------------------------
 // Delivery / recommendation engine
 // ---------------------------------------------------------------------------
 
@@ -452,11 +492,26 @@ export const DEFAULT_SETTINGS: Settings = {
 };
 
 export const DEFAULT_PRODUCTS: Product[] = [
-  { id: 'rose', name: 'Rose', asin: 'B0GZVBBRZP', sku: '', sellingPrice: null, aliases: ['rose'], campaignAliases: [], adGroupAliases: [] },
-  { id: 'coconut', name: 'Coconut', asin: 'B0GZVGXXS2', sku: '', sellingPrice: null, aliases: ['coconut'], campaignAliases: [], adGroupAliases: [] },
-  { id: 'mango', name: 'Mango', asin: 'B0GZVP9HRB', sku: '', sellingPrice: null, aliases: ['mango'], campaignAliases: [], adGroupAliases: [] },
-  { id: 'vanilla', name: 'Vanilla', asin: 'B0H28WG6BB', sku: '', sellingPrice: null, aliases: ['vanilla'], campaignAliases: [], adGroupAliases: [] },
+  { id: 'rose', name: 'Rose', asin: 'B0GZVBBRZP', sku: '', sellingPrice: 19.99, aliases: ['rose'], campaignAliases: [], adGroupAliases: [] },
+  { id: 'coconut', name: 'Coconut', asin: 'B0GZVGXXS2', sku: '', sellingPrice: 19.99, aliases: ['coconut'], campaignAliases: [], adGroupAliases: [] },
+  { id: 'mango', name: 'Mango', asin: 'B0GZVP9HRB', sku: '', sellingPrice: 19.99, aliases: ['mango'], campaignAliases: [], adGroupAliases: [] },
+  { id: 'vanilla', name: 'Vanilla', asin: 'B0H28WG6BB', sku: '', sellingPrice: 19.99, aliases: ['vanilla'], campaignAliases: [], adGroupAliases: [] },
 ];
+
+// Amazon Fees are deliberately NOT seeded here (null + unconfirmed) — they
+// vary by category/program and must never be assumed. Selling Price/COGS
+// use the known current values; the operator must enter and confirm fees
+// before this product's economics are treated as complete.
+export const DEFAULT_PRODUCT_MANUAL_ECONOMICS: Record<string, ProductManualEconomicsInputs> = {
+  rose: { productId: 'rose', cogs: 2.91, amazonFees: null, amazonFeesConfirmed: false, sellerFundedDiscount: 0, targetProfitPerOrder: null, updatedAt: '' },
+  coconut: { productId: 'coconut', cogs: 2.91, amazonFees: null, amazonFeesConfirmed: false, sellerFundedDiscount: 0, targetProfitPerOrder: null, updatedAt: '' },
+  mango: { productId: 'mango', cogs: 2.91, amazonFees: null, amazonFeesConfirmed: false, sellerFundedDiscount: 0, targetProfitPerOrder: null, updatedAt: '' },
+  vanilla: { productId: 'vanilla', cogs: 2.91, amazonFees: null, amazonFeesConfirmed: false, sellerFundedDiscount: 0, targetProfitPerOrder: null, updatedAt: '' },
+};
+
+export function blankManualEconomics(productId: string): ProductManualEconomicsInputs {
+  return { productId, cogs: null, amazonFees: null, amazonFeesConfirmed: false, sellerFundedDiscount: 0, targetProfitPerOrder: null, updatedAt: '' };
+}
 
 // ---------------------------------------------------------------------------
 // Account net profit by period
