@@ -2,14 +2,14 @@ import { useMemo, useState } from 'react';
 import { PageHeader } from '../components/ui/PageHeader';
 import { Card } from '../components/ui/Card';
 import { Table, Th, Td } from '../components/ui/Table';
-import { Badge, confidenceTone, decisionActionTone, riskClassificationTone } from '../components/ui/Badge';
+import { Badge, confidenceTone, decisionActionTone, deliveryTone, riskClassificationTone } from '../components/ui/Badge';
 import { useWorkspace } from '../state/useWorkspace';
 import { useAppStore } from '../state/store';
 import { formatCurrency, formatMultiplier, formatNumber, formatPercent } from '../lib/engine/metrics';
 import { calculateProductEconomics } from '../lib/engine/productEconomicsManual';
 import { computeRisk } from '../lib/engine/riskEngine';
 import { deriveCampaignDecisionAction, deriveTargetDecisionAction, findSearchTermNegativeCandidates } from '../lib/engine/actionEngine';
-import { classifyDelivery } from '../lib/engine/delivery';
+import { classifyDelivery, DELIVERY_LABEL } from '../lib/engine/delivery';
 import { forecastAllHorizons } from '../lib/engine/forecastEngine';
 import { buildVariantIntelligence } from '../lib/engine/variantIntelligence';
 import { rankNextDollarCandidates } from '../lib/engine/nextDollar';
@@ -18,13 +18,30 @@ import { blankManualEconomics } from '../types';
 import type { DecisionAction, ForecastHorizon } from '../types';
 
 const ACTION_LABEL: Record<string, string> = {
-  SCALE: 'Scale', INCREASE_BID: 'Increase Bid', KEEP: 'Keep', HOLD_COLLECT_DATA: 'Hold / Collect Data',
+  SCALE: 'Scale', INCREASE_BID: 'Increase Bid', KEEP: 'Keep', WATCH: 'Watch', HOLD_COLLECT_DATA: 'Hold / Collect Data',
   REDUCE_BID: 'Reduce Bid', PAUSE: 'Pause', TEST_IN_PHRASE: 'Test in Phrase', MOVE_TO_EXACT: 'Move to Exact',
   ADD_NEGATIVE: 'Add Negative', INCREASE_BUDGET: 'Increase Budget', REDUCE_BUDGET: 'Reduce Budget',
 };
 
 const CONFIDENCE_WEIGHT: Record<string, number> = { HIGH: 1, MEDIUM: 0.6, LOW: 0.3 };
 const HORIZON_LABEL: Record<ForecastHorizon, string> = { NEXT_3_DAYS: 'Next 3 Days', NEXT_7_DAYS: 'Next 7 Days', NEXT_30_DAYS: 'Next 30 Days' };
+
+// Monitoring priority for early-stage actions that don't yet have a dollar
+// estimatedImpact (no orders/sales to estimate from) — driven by spend-at-
+// risk and overall risk score, so higher-spend, higher-risk zero-order
+// targets still surface at the top of "What should I do today?" instead of
+// the section going empty just because nothing qualifies for SCALE/REDUCE.
+function priorityScore(a: DecisionAction): number {
+  if (a.estimatedImpact !== 0) return Math.abs(a.estimatedImpact) * (CONFIDENCE_WEIGHT[a.confidence] ?? 0.3);
+  // No dollar estimate yet (no orders/sales to base one on) — fall back to
+  // dollars-at-stake weighted by risk, so higher-spend, higher-risk
+  // zero-order targets still surface near the top.
+  return a.currentPerformance.spend * (a.risk.overallScore / 100);
+}
+
+function hasCurrentActivity(a: DecisionAction): boolean {
+  return a.currentPerformance.impressions > 0 || a.currentPerformance.clicks > 0 || a.currentPerformance.spend > 0;
+}
 
 export function DecisionCenter() {
   const ws = useWorkspace();
@@ -54,14 +71,15 @@ export function DecisionCenter() {
       .filter((t) => t.isCurrentPeriod)
       .map((t) => {
         const breakEven = resolveBreakEven(t.productId);
+        const manualEconomics = t.productId ? manualResults[t.productId] ?? null : null;
         const risk = computeRisk({
           clicks: t.clicks, orders: t.orders, spend: t.spend, acos: t.acos, delivery: t.delivery,
           mappingConfident: t.productId !== null,
           productEconomics: t.productId ? ws.economicsById[t.productId] ?? null : null,
-          manualEconomics: t.productId ? manualResults[t.productId] ?? null : null,
+          manualEconomics,
           settings,
         });
-        return deriveTargetDecisionAction(t, risk, breakEven, settings);
+        return deriveTargetDecisionAction(t, risk, breakEven, settings, manualEconomics);
       });
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [ws.targets, ws.economicsById, manualResults, settings]);
@@ -73,14 +91,15 @@ export function DecisionCenter() {
       .map((c) => {
         const breakEven = resolveBreakEven(c.productId);
         const delivery = classifyDelivery(c.impressions, c.clicks, settings.deliveryThresholds);
+        const manualEconomics = c.productId ? manualResults[c.productId] ?? null : null;
         const risk = computeRisk({
           clicks: c.clicks, orders: c.orders, spend: c.spend, acos: c.acos, delivery,
           mappingConfident: c.productId !== null,
           productEconomics: c.productId ? ws.economicsById[c.productId] ?? null : null,
-          manualEconomics: c.productId ? manualResults[c.productId] ?? null : null,
+          manualEconomics,
           settings,
         });
-        return deriveCampaignDecisionAction(c, risk, breakEven);
+        return deriveCampaignDecisionAction(c, risk, breakEven, delivery, manualEconomics);
       });
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [ws.campaigns, ws.economicsById, manualResults, settings]);
@@ -88,11 +107,17 @@ export function DecisionCenter() {
   const negativeCandidates = useMemo(() => findSearchTermNegativeCandidates(ws.searchTerms, settings), [ws.searchTerms, settings]);
 
   // --- Ranked "what should I do today" list ---
+  // Includes both dollar-quantified actions (SCALE/REDUCE/PAUSE etc., which
+  // have a nonzero estimatedImpact) and early-stage monitoring actions that
+  // don't have enough conversions for a dollar estimate yet — so this list
+  // stays useful even in a zero-order period, instead of going empty just
+  // because nothing qualifies for scaling. Only genuinely inactive rows
+  // (zero impressions, clicks, and spend this period) are excluded.
   const rankedActions = useMemo(() => {
     const all: DecisionAction[] = [...targetDecisions, ...campaignDecisions];
-    const actionable = all.filter((a) => a.estimatedImpact !== 0);
+    const actionable = all.filter(hasCurrentActivity);
     return actionable
-      .sort((a, b) => Math.abs(b.estimatedImpact) * (CONFIDENCE_WEIGHT[b.confidence] ?? 0.3) - Math.abs(a.estimatedImpact) * (CONFIDENCE_WEIGHT[a.confidence] ?? 0.3))
+      .sort((a, b) => priorityScore(b) - priorityScore(a))
       .slice(0, 10);
   }, [targetDecisions, campaignDecisions]);
 
@@ -196,7 +221,7 @@ export function DecisionCenter() {
 
         {rankedActions.length === 0 ? (
           <Card>
-            <p className="text-sm text-navy-500">Nothing urgent right now — every current-period target and campaign is within an acceptable range, or there isn't enough current-period data yet to act on.</p>
+            <p className="text-sm text-navy-500">No current-period impressions, clicks, or spend recorded yet for any campaign or keyword — upload current Amazon Ads reports to see monitoring and scaling actions here.</p>
           </Card>
         ) : (
           <div className="grid grid-cols-1 gap-4 lg:grid-cols-2">
@@ -213,6 +238,10 @@ export function DecisionCenter() {
                   <Badge tone={decisionActionTone(a.action)}>{ACTION_LABEL[a.action]}</Badge>
                 </div>
 
+                <div className="mt-2 rounded-lg bg-navy-900/[0.04] px-3 py-1.5 text-xs font-semibold tracking-wide text-navy-800">
+                  {a.checkpointLabel}
+                </div>
+
                 <div className="mt-3 grid grid-cols-2 gap-x-4 gap-y-1 text-xs text-navy-600">
                   <div>Impressions <span className="float-right font-medium text-navy-900">{formatNumber(a.currentPerformance.impressions)}</span></div>
                   <div>Clicks <span className="float-right font-medium text-navy-900">{formatNumber(a.currentPerformance.clicks)}</span></div>
@@ -220,6 +249,24 @@ export function DecisionCenter() {
                   <div>Orders <span className="float-right font-medium text-navy-900">{formatNumber(a.currentPerformance.orders)}</span></div>
                   <div>Sales <span className="float-right font-medium text-navy-900">{formatCurrency(a.currentPerformance.sales)}</span></div>
                   <div>ACoS <span className="float-right font-medium text-navy-900">{formatPercent(a.currentPerformance.acos)}</span></div>
+                </div>
+
+                <div className="mt-3 grid grid-cols-2 gap-x-4 gap-y-1 border-t border-border-subtle pt-2 text-xs text-navy-600">
+                  <div>
+                    Spend vs Target CPA
+                    <span className="float-right font-medium text-navy-900">
+                      {a.targetCpa !== null ? `${formatCurrency(a.currentPerformance.spend)} / ${formatCurrency(a.targetCpa)}` : 'Set target profit'}
+                    </span>
+                  </div>
+                  <div>
+                    Spend vs Break-even CPA
+                    <span className="float-right font-medium text-navy-900">
+                      {a.breakEvenCpa !== null ? `${formatCurrency(a.currentPerformance.spend)} / ${formatCurrency(a.breakEvenCpa)}` : 'Economics incomplete'}
+                    </span>
+                  </div>
+                  <div>Remaining Test Allowance <span className="float-right font-medium text-navy-900">{formatCurrency(a.remainingTestAllowance)}</span></div>
+                  <div>Traffic / Delivery <span className="float-right font-medium text-navy-900">{DELIVERY_LABEL[a.delivery]}</span></div>
+                  <div>Conversion Evidence <span className="float-right font-medium text-navy-900">{a.conversionEvidence}</span></div>
                 </div>
 
                 {(a.recommendedBid !== null || a.recommendedBudget !== null) && (
@@ -233,9 +280,12 @@ export function DecisionCenter() {
                 <div className="mt-3 flex flex-wrap items-center gap-2">
                   <Badge tone={riskClassificationTone(a.risk.classification)}>{a.risk.classification} RISK ({a.risk.overallScore})</Badge>
                   <Badge tone={confidenceTone(a.confidence)}>{a.confidence} CONFIDENCE</Badge>
-                  <span className={`text-xs font-semibold ${a.estimatedImpact >= 0 ? 'text-positive-600' : 'text-negative-600'}`}>
-                    {a.estimatedImpact >= 0 ? '+' : ''}{formatCurrency(a.estimatedImpact)} expected impact
-                  </span>
+                  <Badge tone={deliveryTone(a.delivery)}>{DELIVERY_LABEL[a.delivery]}</Badge>
+                  {a.estimatedImpact !== 0 && (
+                    <span className={`text-xs font-semibold ${a.estimatedImpact >= 0 ? 'text-positive-600' : 'text-negative-600'}`}>
+                      {a.estimatedImpact >= 0 ? '+' : ''}{formatCurrency(a.estimatedImpact)} expected impact
+                    </span>
+                  )}
                 </div>
               </Card>
             ))}

@@ -523,6 +523,7 @@ export type DecisionActionType =
   | 'SCALE'
   | 'INCREASE_BID'
   | 'KEEP'
+  | 'WATCH'
   | 'HOLD_COLLECT_DATA'
   | 'REDUCE_BID'
   | 'PAUSE'
@@ -531,6 +532,12 @@ export type DecisionActionType =
   | 'ADD_NEGATIVE'
   | 'INCREASE_BUDGET'
   | 'REDUCE_BUDGET';
+
+// How much real conversion evidence exists yet. Deliberately separate from
+// risk/confidence — this is purely "how much do we actually know", never an
+// inference about performance. NONE/WEAK never imply poor performance, and
+// SCALE/INCREASE_BUDGET decisions require at least MODERATE.
+export type ConversionEvidence = 'NONE' | 'WEAK' | 'MODERATE' | 'STRONG';
 
 export interface DecisionAction {
   scope: 'TARGET' | 'CAMPAIGN';
@@ -560,6 +567,20 @@ export interface DecisionAction {
     sales: number;
     acos: number | null;
   };
+  // Early-stage evidence fields — always populated (never fabricated), so
+  // the Decision Center can give useful guidance before there are enough
+  // orders for the base engine to reach a firm SCALE/REDUCE/PAUSE call.
+  conversionEvidence: ConversionEvidence;
+  // Short, human-readable next milestone, e.g. "HOLD — COLLECT 2 MORE
+  // CLICKS" or "WATCH — $3.03 REMAINING BEFORE REVIEW". Always present.
+  checkpointLabel: string;
+  // Dollars remaining before risk.maxTestingSpend is reached. Floored at 0.
+  remainingTestAllowance: number;
+  // Manual per-product economics dollar figures, when confirmed. Null,
+  // never guessed, when Amazon Fees haven't been entered/confirmed.
+  targetCpa: number | null; // Maximum CPA for target profit
+  breakEvenCpa: number | null; // Break-even CPA
+  delivery: DeliveryStatus;
 }
 
 // ---------------------------------------------------------------------------

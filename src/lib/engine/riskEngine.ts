@@ -85,7 +85,23 @@ export function computeRisk(input: RiskInput): RiskBreakdown {
   const breakEven = resolveBreakEven(productEconomics, manualEconomics);
   let profitabilityRisk: number;
   if (acos === null) {
-    profitabilityRisk = orders > 0 ? 10 : 30; // orders with no computable ACoS is unusual; otherwise mild/unknown
+    if (orders > 0) {
+      profitabilityRisk = 10; // orders with no computable ACoS is unusual — mild
+    } else if (spend > 0 && manualEconomics?.complete && manualEconomics.breakEvenCpa !== null && manualEconomics.breakEvenCpa > 0) {
+      // No sale yet, but we can still measure how much of the "cost of one
+      // break-even order" has already been spent. This is a real, non-
+      // fabricated signal (observed spend vs a confirmed economics figure)
+      // that differentiates targets/products by their actual spend and
+      // economics instead of clustering every zero-order case at the same
+      // flat score.
+      const spendVsBreakEvenCpa = spend / manualEconomics.breakEvenCpa;
+      profitabilityRisk = clamp(spendVsBreakEvenCpa * 55);
+      if (spendVsBreakEvenCpa >= 1) {
+        reasons.push(`Spend ($${spend.toFixed(2)}) has already reached this product's break-even CPA ($${manualEconomics.breakEvenCpa.toFixed(2)}) without a sale yet.`);
+      }
+    } else {
+      profitabilityRisk = 30; // no economics to compare spend against — moderate, unknown-leaning
+    }
   } else if (breakEven === null) {
     profitabilityRisk = 40; // real ACoS exists but nothing to compare it to — moderate, unknown-leaning risk
     reasons.push('No confirmed product economics (Sellerboard or manual) — profitability risk is only an approximation.');

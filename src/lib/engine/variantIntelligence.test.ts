@@ -64,4 +64,32 @@ describe('buildVariantIntelligence', () => {
     expect(result.highestRisk).toBeNull();
     expect(result.strongestScalingOpportunity).toBeNull();
   });
+
+  it('never crowns "Best CVR" when every product has zero orders — a 0%-vs-0% tie is not real evidence', () => {
+    const zeroOrderRows: ProductPerformanceRow[] = [
+      row({ productId: 'rose', productName: 'Rose', clicks: 10, spend: 5 }),
+      row({ productId: 'coconut', productName: 'Coconut', clicks: 20, spend: 8 }),
+    ];
+    const result = buildVariantIntelligence(zeroOrderRows, {}, {});
+    expect(result.bestConversion).toBeNull();
+  });
+
+  it('crowns "Best CVR" among products that do have orders, ignoring zero-order rows', () => {
+    const mixedRows: ProductPerformanceRow[] = [
+      row({ productId: 'rose', productName: 'Rose', clicks: 10, orders: 2, spend: 5 }),
+      row({ productId: 'coconut', productName: 'Coconut', clicks: 20, orders: 0, spend: 8 }),
+    ];
+    const result = buildVariantIntelligence(mixedRows, {}, {});
+    expect(result.bestConversion).toBe('rose');
+  });
+
+  it('does not crown "Highest Risk" when the gap to the runner-up is not materially meaningful (e.g. 27 vs 26)', () => {
+    const result = buildVariantIntelligence(rows, economicsById, { rose: 26, coconut: 27, mango: 25, vanilla: 24 });
+    expect(result.highestRisk).toBeNull();
+  });
+
+  it('still crowns a single scored product as "Highest Risk" when it is the only one with a score', () => {
+    const result = buildVariantIntelligence(rows, economicsById, { rose: 40 });
+    expect(result.highestRisk).toBe('rose');
+  });
 });

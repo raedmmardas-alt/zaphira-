@@ -36,6 +36,27 @@ export function buildVariantIntelligence(
     return sorted[0].productId;
   }
 
+  // Conversion rate is only real evidence when at least one order backs it —
+  // a 0%-vs-0% "win" between two products with zero orders is not a
+  // meaningful comparison and must never be crowned "Best CVR".
+  const withOrders = rows.filter((r) => r.orders > 0);
+  const bestConversion = withOrders.length > 0
+    ? [...withOrders].sort((a, b) => (b.cvr ?? 0) - (a.cvr ?? 0))[0].productId
+    : null;
+
+  // "Highest Risk" is only meaningful when the gap to the runner-up is large
+  // enough to represent a real difference, not noise (e.g. 27 vs 26). A
+  // single scored product is always shown; with 2+, require a real gap.
+  const MEANINGFUL_RISK_GAP = 10;
+  function highestRiskWithMeaningfulGap(): string | null {
+    const withRisk = rows.filter((r) => r.riskScore !== null);
+    if (withRisk.length === 0) return null;
+    const sorted = [...withRisk].sort((a, b) => b.riskScore! - a.riskScore!);
+    if (sorted.length === 1) return sorted[0].productId;
+    const gap = sorted[0].riskScore! - sorted[1].riskScore!;
+    return gap >= MEANINGFUL_RISK_GAP ? sorted[0].productId : null;
+  }
+
   // A defensible, non-fabricated heuristic: the strongest scaling
   // opportunity is the most profitable product among those that are BOTH
   // confirmed profitable and not already flagged as elevated risk. Returns
@@ -49,10 +70,10 @@ export function buildVariantIntelligence(
     rows,
     strongestTraffic: bestBy((r) => r.clicks),
     bestCtr: bestBy((r) => r.ctr),
-    bestConversion: bestBy((r) => r.cvr),
+    bestConversion,
     bestCpa: bestBy((r) => r.cpa, true),
     bestProfitability: bestBy((r) => r.netProfit),
     strongestScalingOpportunity,
-    highestRisk: bestBy((r) => r.riskScore),
+    highestRisk: highestRiskWithMeaningfulGap(),
   };
 }

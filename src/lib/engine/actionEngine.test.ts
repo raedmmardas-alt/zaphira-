@@ -34,9 +34,9 @@ describe('deriveTargetDecisionAction', () => {
     expect(deriveTargetDecisionAction(t2, riskFor(), null, DEFAULT_SETTINGS).action).toBe('HOLD_COLLECT_DATA');
   });
 
-  it('maps WATCH to KEEP', () => {
+  it('maps WATCH to its own distinct WATCH action, not KEEP — this is active monitoring, not "all fine"', () => {
     const t = target({ action: baseAction({ action: 'WATCH' }) });
-    expect(deriveTargetDecisionAction(t, riskFor(), null, DEFAULT_SETTINGS).action).toBe('KEEP');
+    expect(deriveTargetDecisionAction(t, riskFor(), null, DEFAULT_SETTINGS).action).toBe('WATCH');
   });
 
   it('maps NEGATIVE_PAUSE_CANDIDATE to PAUSE with no recommended bid', () => {
@@ -91,6 +91,63 @@ describe('deriveTargetDecisionAction', () => {
     const reduceDecision = deriveTargetDecisionAction(reduceTarget, riskFor({ spend: 20 }), 0.5, DEFAULT_SETTINGS);
     expect(reduceDecision.estimatedImpact).toBeLessThan(0);
   });
+
+  describe('early-stage evidence fields', () => {
+    it('reports conversionEvidence as NONE/WEAK/MODERATE/STRONG based purely on clicks and orders', () => {
+      expect(deriveTargetDecisionAction(target({ clicks: 2, orders: 0, action: baseAction({ action: 'WAIT' }) }), riskFor(), null, DEFAULT_SETTINGS).conversionEvidence).toBe('NONE');
+      expect(deriveTargetDecisionAction(target({ clicks: 10, orders: 0, action: baseAction({ action: 'WATCH' }) }), riskFor(), null, DEFAULT_SETTINGS).conversionEvidence).toBe('WEAK');
+      expect(deriveTargetDecisionAction(target({ clicks: 10, orders: 1 }), riskFor(), null, DEFAULT_SETTINGS).conversionEvidence).toBe('MODERATE');
+      expect(deriveTargetDecisionAction(target({ clicks: 10, orders: 2, acos: 0.1, action: baseAction({ action: 'SCALE' }) }), riskFor(), 0.5, DEFAULT_SETTINGS).conversionEvidence).toBe('STRONG');
+    });
+
+    it('gives a "collect N more clicks" checkpoint for WAIT, never requiring 2 purchases just to say something useful', () => {
+      const d = deriveTargetDecisionAction(target({ clicks: 3, action: baseAction({ action: 'WAIT' }) }), riskFor({ clicks: 3 }), null, DEFAULT_SETTINGS);
+      expect(d.action).toBe('HOLD_COLLECT_DATA');
+      expect(d.checkpointLabel).toMatch(/COLLECT 2 MORE CLICK/);
+    });
+
+    it('flags NO_DELIVERY as a traffic issue, never a performance judgment, and does not suggest pausing', () => {
+      const d = deriveTargetDecisionAction(
+        target({ clicks: 0, impressions: 0, delivery: 'NO_DELIVERY', action: baseAction({ action: 'WAIT' }) }),
+        riskFor({ clicks: 0, delivery: 'NO_DELIVERY' }), null, DEFAULT_SETTINGS,
+      );
+      expect(d.checkpointLabel).toBe('NO TRAFFIC — CONSIDER BID INCREASE');
+      expect(d.action).not.toBe('PAUSE');
+    });
+
+    it('flags LOW_DELIVERY with an explicit "do not pause" reassurance', () => {
+      const d = deriveTargetDecisionAction(
+        target({ clicks: 0, impressions: 5, delivery: 'LOW_DELIVERY', action: baseAction({ action: 'WAIT' }) }),
+        riskFor({ clicks: 0, delivery: 'LOW_DELIVERY' }), null, DEFAULT_SETTINGS,
+      );
+      expect(d.checkpointLabel).toBe('LOW DELIVERY — DO NOT PAUSE');
+      expect(d.action).not.toBe('PAUSE');
+    });
+
+    it('computes remainingTestAllowance as maxTestingSpend minus current spend, floored at 0', () => {
+      const risk = riskFor({ spend: 5 });
+      const d = deriveTargetDecisionAction(target({ spend: 5 }), risk, null, DEFAULT_SETTINGS);
+      expect(d.remainingTestAllowance).toBeCloseTo(Math.max(0, risk.maxTestingSpend - 5));
+      expect(d.remainingTestAllowance).toBeGreaterThanOrEqual(0);
+    });
+
+    it('never reports PAUSE purely from zero conversions — pausing still requires the base engine\'s real evidence bar', () => {
+      // 0 orders, moderate spend, well under the base engine's pause bar (needs clicks >= 20 AND spend > 20).
+      const d = deriveTargetDecisionAction(target({ clicks: 10, spend: 11.97, orders: 0, action: baseAction({ action: 'WATCH' }) }), riskFor({ clicks: 10, spend: 11.97 }), null, DEFAULT_SETTINGS);
+      expect(d.action).not.toBe('PAUSE');
+    });
+
+    it('surfaces targetCpa and breakEvenCpa from confirmed manual economics, and leaves them null when economics are incomplete', () => {
+      const manualEcon = { productId: 'rose', complete: true as const, missingFields: [], contributionBeforeAdvertising: 11.99, breakEvenCpa: 11.99, breakEvenAcos: 0.6, maxCpaForTargetProfit: 6.99, targetAcos: 0.35 };
+      const withEcon = deriveTargetDecisionAction(target({}), riskFor(), null, DEFAULT_SETTINGS, manualEcon);
+      expect(withEcon.targetCpa).toBe(6.99);
+      expect(withEcon.breakEvenCpa).toBe(11.99);
+
+      const withoutEcon = deriveTargetDecisionAction(target({}), riskFor(), null, DEFAULT_SETTINGS, null);
+      expect(withoutEcon.targetCpa).toBeNull();
+      expect(withoutEcon.breakEvenCpa).toBeNull();
+    });
+  });
 });
 
 describe('deriveCampaignDecisionAction', () => {
@@ -133,6 +190,21 @@ describe('deriveCampaignDecisionAction', () => {
     const c = campaign({ spend: 5, budget: null, acos: 0.9 });
     const d = deriveCampaignDecisionAction(c, riskFor(), 0.5);
     expect(['INCREASE_BUDGET', 'REDUCE_BUDGET']).not.toContain(d.action);
+  });
+
+  it('threads delivery status through to the checkpoint label and flags NO_DELIVERY as a traffic issue', () => {
+    const c = campaign({ spend: 0, clicks: 0, impressions: 0, orders: 0, sales: 0, acos: null });
+    const d = deriveCampaignDecisionAction(c, riskFor({ clicks: 0, spend: 0, delivery: 'NO_DELIVERY' }), 0.5, 'NO_DELIVERY');
+    expect(d.checkpointLabel).toBe('NO TRAFFIC — CONSIDER BID INCREASE');
+    expect(d.delivery).toBe('NO_DELIVERY');
+  });
+
+  it('surfaces targetCpa/breakEvenCpa from manual economics when passed through', () => {
+    const manualEcon = { productId: 'rose', complete: true as const, missingFields: [], contributionBeforeAdvertising: 11.99, breakEvenCpa: 11.99, breakEvenAcos: 0.6, maxCpaForTargetProfit: 6.99, targetAcos: 0.35 };
+    const c = campaign({ spend: 5, budget: 20, acos: 0.1 });
+    const d = deriveCampaignDecisionAction(c, riskFor(), 0.5, 'DELIVERING', manualEcon);
+    expect(d.targetCpa).toBe(6.99);
+    expect(d.breakEvenCpa).toBe(11.99);
   });
 });
 

@@ -79,4 +79,39 @@ describe('computeRisk', () => {
     const r = computeRisk(baseInput({ manualEconomics: manualEconomics(0.5, 999) }));
     expect(r.maxTestingSpend).toBeLessThanOrEqual(DEFAULT_SETTINGS.stopLossSpend);
   });
+
+  describe('zero-order profitability risk differentiation (early-stage evidence)', () => {
+    it('falls back to a flat, moderate profitability risk when no economics are confirmed at all', () => {
+      const r = computeRisk(baseInput({ clicks: 10, orders: 0, spend: 11.97, delivery: 'HIGH_DELIVERY' }));
+      expect(r.profitabilityRisk).toBe(30);
+    });
+
+    it('scales profitability risk with how close spend is to the confirmed break-even CPA, with zero orders', () => {
+      const nearBreakEven = computeRisk(baseInput({
+        clicks: 10, orders: 0, spend: 11.97, delivery: 'HIGH_DELIVERY',
+        manualEconomics: manualEconomics(0.6, 11.99),
+      }));
+      const farFromBreakEven = computeRisk(baseInput({
+        clicks: 10, orders: 0, spend: 2, delivery: 'HIGH_DELIVERY',
+        manualEconomics: manualEconomics(0.6, 20),
+      }));
+      // Real spend of $11.97 against a $11.99 break-even CPA is materially
+      // riskier than $2 against a $20 break-even CPA, even though both are
+      // "zero orders" — the score must reflect that, not collapse to the
+      // same flat number.
+      expect(nearBreakEven.profitabilityRisk).toBeGreaterThan(farFromBreakEven.profitabilityRisk);
+      expect(nearBreakEven.profitabilityRisk).toBeGreaterThan(45);
+      expect(farFromBreakEven.profitabilityRisk).toBeLessThan(15);
+    });
+
+    it('never inflates profitability risk from spend-vs-breakeven proximity when there IS a real order (acos is known)', () => {
+      // Guards against the new zero-order branch leaking into the
+      // acos-known path — that path is unchanged and must stay untouched.
+      const r = computeRisk(baseInput({
+        clicks: 20, orders: 3, spend: 10, acos: 0.1, delivery: 'HIGH_DELIVERY',
+        manualEconomics: manualEconomics(0.5, 5),
+      }));
+      expect(r.profitabilityRisk).toBeLessThan(20);
+    });
+  });
 });

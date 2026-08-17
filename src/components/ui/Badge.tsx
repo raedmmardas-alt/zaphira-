@@ -82,6 +82,7 @@ export function decisionActionTone(action: string): BadgeTone {
     case 'MOVE_TO_EXACT': return 'positive';
     case 'INCREASE_BUDGET': return 'positive';
     case 'KEEP': return 'brand';
+    case 'WATCH': return 'watch';
     case 'HOLD_COLLECT_DATA': return 'wait';
     case 'REDUCE_BID': return 'watch';
     case 'REDUCE_BUDGET': return 'watch';

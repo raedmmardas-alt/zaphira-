@@ -1,8 +1,82 @@
-import type { DecisionAction, DecisionActionType, EnrichedCampaign, EnrichedSearchTerm, EnrichedTarget, RiskBreakdown, Settings } from '../../types';
+import type {
+  ConversionEvidence, DecisionAction, DecisionActionType, DeliveryStatus, EnrichedCampaign, EnrichedSearchTerm,
+  EnrichedTarget, ProductEconomicsCalcResult, RiskBreakdown, Settings, TargetActionType,
+} from '../../types';
 
 const MIN_BID = 0.02;
 function clampBid(bid: number): number {
   return Math.max(MIN_BID, Math.round(bid * 100) / 100);
+}
+
+// How much real conversion evidence exists — purely about sample size and
+// orders observed, never an inference about quality. NONE/WEAK must never
+// be read as poor performance; they only gate which actions are allowed
+// (SCALE / INCREASE_BUDGET require at least MODERATE elsewhere).
+function conversionEvidenceFor(clicks: number, orders: number): ConversionEvidence {
+  if (orders >= 2) return 'STRONG';
+  if (orders === 1) return 'MODERATE';
+  if (clicks >= 5) return 'WEAK';
+  return 'NONE';
+}
+
+// Produces a short, human-readable "next milestone" for early-stage
+// (pre-conversion or low-evidence) targets, so the Decision Center has
+// something concrete to say before the base engine has enough evidence for
+// a firm SCALE/REDUCE/PAUSE call. Every branch here is computed from real,
+// already-observed figures (clicks, spend, remaining stop-loss allowance,
+// delivery status) — nothing is guessed about future conversion behavior.
+function targetCheckpointLabel(params: {
+  baseAction: TargetActionType;
+  clicks: number;
+  orders: number;
+  delivery: DeliveryStatus;
+  remainingAllowance: number;
+  avgCpc: number | null;
+}): string {
+  const { baseAction, clicks, orders, delivery, remainingAllowance, avgCpc } = params;
+
+  if (baseAction === 'PRODUCT_MAPPING_REQUIRED') return 'MAP PRODUCT TO ENABLE RECOMMENDATIONS';
+
+  // Traffic-status reassurance takes priority — a target with no/low
+  // delivery is not a performance failure and must never read as one.
+  if (delivery === 'NO_DELIVERY' && (baseAction === 'WAIT' || baseAction === 'WATCH')) {
+    return 'NO TRAFFIC — CONSIDER BID INCREASE';
+  }
+  if (delivery === 'LOW_DELIVERY' && (baseAction === 'WAIT' || baseAction === 'WATCH')) {
+    return 'LOW DELIVERY — DO NOT PAUSE';
+  }
+
+  if (orders === 0 && remainingAllowance <= 2 && (baseAction === 'WATCH' || baseAction === 'REDUCE_BID')) {
+    return `STOP-LOSS APPROACHING — $${remainingAllowance.toFixed(2)} REMAINING`;
+  }
+
+  if (baseAction === 'WAIT') {
+    const need = Math.max(1, 5 - clicks);
+    return `HOLD — COLLECT ${need} MORE CLICK${need === 1 ? '' : 'S'}`;
+  }
+
+  if (baseAction === 'WATCH' && orders === 0) {
+    // How many more non-converting clicks, at the currently observed CPC,
+    // would exhaust the remaining test allowance — a real projection from
+    // observed spend, not a guess about whether those clicks will convert.
+    const estClicks = avgCpc && avgCpc > 0 ? Math.max(1, Math.round(remainingAllowance / avgCpc)) : null;
+    if (estClicks !== null && estClicks <= 5) {
+      return `WATCH — REDUCE BID ~10% IF NEXT ${estClicks} CLICK${estClicks === 1 ? '' : 'S'} DO NOT CONVERT`;
+    }
+    return `WATCH — $${remainingAllowance.toFixed(2)} REMAINING BEFORE REVIEW`;
+  }
+
+  if (baseAction === 'WATCH') return 'WATCH — MONITOR FOR MORE CONVERSION DATA';
+
+  if (baseAction === 'REDUCE_BID') {
+    return orders === 0 ? 'REDUCE BID — NO CONVERSIONS AT CURRENT SPEND LEVEL' : 'REDUCE BID — ACOS ABOVE TARGET';
+  }
+
+  if (baseAction === 'NEGATIVE_PAUSE_CANDIDATE') return `PAUSE CANDIDATE — ${clicks} CLICKS, NO CONVERSIONS`;
+
+  if (baseAction === 'SCALE') return 'SCALE — EVIDENCE SUPPORTS INCREASED INVESTMENT';
+
+  return 'ON TRACK — NO ACTION NEEDED';
 }
 
 // Layers the expanded, non-technical action vocabulary on top of the
@@ -16,6 +90,7 @@ export function deriveTargetDecisionAction(
   risk: RiskBreakdown,
   breakEvenAcos: number | null,
   settings: Settings,
+  manualEconomics: ProductEconomicsCalcResult | null = null,
 ): DecisionAction {
   const base = target.action;
   let action: DecisionActionType;
@@ -30,7 +105,9 @@ export function deriveTargetDecisionAction(
       action = 'HOLD_COLLECT_DATA';
       break;
     case 'WATCH':
-      action = 'KEEP';
+      // Kept distinct from KEEP — this is active monitoring with a next
+      // checkpoint, not a "this is fine" signal. See checkpointLabel below.
+      action = 'WATCH';
       break;
     case 'KEEP': {
       // A single promising order (not yet the 2+ the base engine requires
@@ -98,6 +175,13 @@ export function deriveTargetDecisionAction(
     estimatedImpact = -(target.spend * (risk.overallScore / 100));
   }
 
+  const remainingTestAllowance = Math.max(0, Math.round((risk.maxTestingSpend - target.spend) * 100) / 100);
+  const avgCpc = target.clicks > 0 ? target.spend / target.clicks : null;
+  const checkpointLabel = targetCheckpointLabel({
+    baseAction: base.action, clicks: target.clicks, orders: target.orders, delivery: target.delivery,
+    remainingAllowance: remainingTestAllowance, avgCpc,
+  });
+
   return {
     scope: 'TARGET',
     key: target.key,
@@ -124,7 +208,45 @@ export function deriveTargetDecisionAction(
       sales: target.sales,
       acos: target.acos,
     },
+    conversionEvidence: conversionEvidenceFor(target.clicks, target.orders),
+    checkpointLabel,
+    remainingTestAllowance,
+    targetCpa: manualEconomics?.complete ? manualEconomics.maxCpaForTargetProfit : null,
+    breakEvenCpa: manualEconomics?.complete ? manualEconomics.breakEvenCpa : null,
+    delivery: target.delivery,
   };
+}
+
+// Campaign-level equivalent of targetCheckpointLabel — same "real observed
+// figures only" rule, just working from the campaign action already decided
+// (INCREASE_BUDGET / REDUCE_BUDGET / KEEP / HOLD_COLLECT_DATA) instead of
+// the target's TargetActionType.
+function campaignCheckpointLabel(params: {
+  action: DecisionActionType;
+  clicks: number;
+  orders: number;
+  delivery: DeliveryStatus;
+  remainingAllowance: number;
+}): string {
+  const { action, clicks, orders, delivery, remainingAllowance } = params;
+
+  if (action === 'HOLD_COLLECT_DATA' && delivery === 'NO_DELIVERY') return 'NO TRAFFIC — CONSIDER BID INCREASE';
+  if (action === 'HOLD_COLLECT_DATA' && delivery === 'LOW_DELIVERY') return 'LOW DELIVERY — DO NOT PAUSE';
+
+  if (action === 'HOLD_COLLECT_DATA') {
+    if (clicks === 0) {
+      return 'HOLD — COLLECT MORE TRAFFIC';
+    }
+    if (orders === 0 && remainingAllowance <= 2) {
+      return `STOP-LOSS APPROACHING — $${remainingAllowance.toFixed(2)} REMAINING`;
+    }
+    return `WATCH — $${remainingAllowance.toFixed(2)} REMAINING BEFORE REVIEW`;
+  }
+
+  if (action === 'INCREASE_BUDGET') return 'INCREASE BUDGET — EFFICIENT AND BUDGET-CAPPED';
+  if (action === 'REDUCE_BUDGET') return 'REDUCE BUDGET — ABOVE BREAK-EVEN AND BUDGET-CAPPED';
+
+  return 'ON TRACK — NO ACTION NEEDED';
 }
 
 // Campaign-level actions are scoped to BUDGET only (INCREASE_BUDGET /
@@ -134,6 +256,8 @@ export function deriveCampaignDecisionAction(
   campaign: EnrichedCampaign,
   risk: RiskBreakdown,
   breakEvenAcos: number | null,
+  delivery: DeliveryStatus = 'DELIVERING',
+  manualEconomics: ProductEconomicsCalcResult | null = null,
 ): DecisionAction {
   let action: DecisionActionType;
   let recommendedBudget: number | null = null;
@@ -172,6 +296,8 @@ export function deriveCampaignDecisionAction(
     reason = `ACoS (${(campaign.acos * 100).toFixed(1)}%) is above break-even, but budget is not capping spend — review target-level bids rather than the campaign budget.`;
   }
 
+  const remainingTestAllowance = Math.max(0, Math.round((risk.maxTestingSpend - campaign.spend) * 100) / 100);
+
   return {
     scope: 'CAMPAIGN',
     key: campaign.campaign,
@@ -198,6 +324,12 @@ export function deriveCampaignDecisionAction(
       sales: campaign.sales,
       acos: campaign.acos,
     },
+    conversionEvidence: conversionEvidenceFor(campaign.clicks, campaign.orders),
+    checkpointLabel: campaignCheckpointLabel({ action, clicks: campaign.clicks, orders: campaign.orders, delivery, remainingAllowance: remainingTestAllowance }),
+    remainingTestAllowance,
+    targetCpa: manualEconomics?.complete ? manualEconomics.maxCpaForTargetProfit : null,
+    breakEvenCpa: manualEconomics?.complete ? manualEconomics.breakEvenCpa : null,
+    delivery,
   };
 }
 
