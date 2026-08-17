@@ -56,9 +56,9 @@ function targetCheckpointLabel(params: {
   }
 
   if (baseAction === 'WATCH' && orders === 0) {
-    // How many more non-converting clicks, at the currently observed CPC,
-    // would exhaust the remaining test allowance — a real projection from
-    // observed spend, not a guess about whether those clicks will convert.
+    // No confirmed economics to drive the two-CPA ladder below — fall back
+    // to the generic stop-loss allowance so there's still something
+    // concrete to say, without fabricating a product-specific figure.
     const estClicks = avgCpc && avgCpc > 0 ? Math.max(1, Math.round(remainingAllowance / avgCpc)) : null;
     if (estClicks !== null && estClicks <= 5) {
       return `WATCH — REDUCE BID ~10% IF NEXT ${estClicks} CLICK${estClicks === 1 ? '' : 'S'} DO NOT CONVERT`;
@@ -77,6 +77,62 @@ function targetCheckpointLabel(params: {
   if (baseAction === 'SCALE') return 'SCALE — EVIDENCE SUPPORTS INCREASED INVESTMENT';
 
   return 'ON TRACK — NO ACTION NEEDED';
+}
+
+// The zero-order, evidence-sufficient (clicks >= 5) decision ladder, driven
+// by the product's own two CPA thresholds instead of the base engine's
+// generic dollar bands ($8/$15/$20), which don't know this product's real
+// economics. Only applies when BOTH CPA figures are confirmed and sane
+// (targetCpa < breakEvenCpa, both positive) — otherwise the caller falls
+// back to the generic, economics-agnostic checkpoint above.
+//
+//   Max CPA Target (targetCpa)   — soft review threshold, preserves target profit.
+//   Break-even CPA (breakEvenCpa) — hard economic stop-loss threshold.
+//
+// "Approaching" a threshold is spend reaching 80% of it — close enough to
+// warrant a heads-up before the threshold is actually crossed.
+const APPROACH_RATIO = 0.8;
+
+function zeroOrderEconomicsLadder(params: {
+  spend: number;
+  targetCpa: number;
+  breakEvenCpa: number;
+}): { action: DecisionActionType; checkpointLabel: string; reason: string } {
+  const { spend, targetCpa, breakEvenCpa } = params;
+
+  if (spend >= breakEvenCpa) {
+    return {
+      action: 'PAUSE',
+      checkpointLabel: 'BREAK-EVEN EXCEEDED — STRONG PAUSE/REDUCTION RECOMMENDATION',
+      reason: `$${spend.toFixed(2)} spent with 0 purchases has passed this product's break-even CPA ($${breakEvenCpa.toFixed(2)}) — this spend can no longer be recovered by an average order. Recommend pausing or a significant bid reduction, unless there is compelling historical evidence this target converts.`,
+    };
+  }
+  if (spend >= breakEvenCpa * APPROACH_RATIO) {
+    return {
+      action: 'REDUCE_BID',
+      checkpointLabel: 'HIGH RISK — HARD STOP APPROACHING',
+      reason: `$${spend.toFixed(2)} spent with 0 purchases is approaching this product's break-even CPA ($${breakEvenCpa.toFixed(2)}) — further spend without a sale carries meaningful loss risk.`,
+    };
+  }
+  if (spend >= targetCpa) {
+    return {
+      action: 'REDUCE_BID',
+      checkpointLabel: 'TARGET CPA EXCEEDED — CONSIDER BID REDUCTION',
+      reason: `$${spend.toFixed(2)} spent with 0 purchases has passed this product's target CPA ($${targetCpa.toFixed(2)}, preserving its target profit) — consider a bid reduction or closer review.`,
+    };
+  }
+  if (spend >= targetCpa * APPROACH_RATIO) {
+    return {
+      action: 'WATCH',
+      checkpointLabel: 'WATCH — REVIEW SOON',
+      reason: `$${spend.toFixed(2)} spent with 0 purchases is approaching this product's target CPA ($${targetCpa.toFixed(2)}) — review soon.`,
+    };
+  }
+  return {
+    action: 'HOLD_COLLECT_DATA',
+    checkpointLabel: 'HOLD / COLLECT DATA',
+    reason: `$${spend.toFixed(2)} spent with 0 purchases is still well below this product's target CPA ($${targetCpa.toFixed(2)}) — continue collecting data.`,
+  };
 }
 
 // Layers the expanded, non-technical action vocabulary on top of the
@@ -161,6 +217,46 @@ export function deriveTargetDecisionAction(
       action = 'KEEP';
   }
 
+  // For the zero-order, evidence-sufficient case (clicks >= 5 — the whole
+  // WAIT/WATCH/REDUCE_BID/NEGATIVE_PAUSE_CANDIDATE family the base engine
+  // can return when orders === 0), let this product's own confirmed CPA
+  // economics drive the decision instead of the base engine's generic
+  // dollar bands, which don't know this product's real break-even. This is
+  // a Decision Center presentation choice only — decideTargetAction and its
+  // own $8/$15/$20 thresholds are untouched and still drive every other
+  // page that reads target.action directly.
+  const targetCpaValue = manualEconomics?.complete ? manualEconomics.maxCpaForTargetProfit : null;
+  const breakEvenCpaValue = manualEconomics?.complete ? manualEconomics.breakEvenCpa : null;
+  const laddersApplicable = target.orders === 0 && target.clicks >= 5 && targetCpaValue !== null && breakEvenCpaValue !== null
+    && targetCpaValue > 0 && breakEvenCpaValue > targetCpaValue;
+
+  let checkpointLabel: string;
+  if (laddersApplicable) {
+    const ladder = zeroOrderEconomicsLadder({ spend: target.spend, targetCpa: targetCpaValue!, breakEvenCpa: breakEvenCpaValue! });
+    action = ladder.action;
+    reason = ladder.reason;
+    checkpointLabel = ladder.checkpointLabel;
+    if (action === 'PAUSE') {
+      recommendedBid = null;
+    } else if (action === 'REDUCE_BID' && target.currentBid !== null) {
+      // Hard-stop-approaching gets the larger, base-engine-style cut (15%,
+      // bounded by settings); target-CPA-exceeded gets the smaller one
+      // (10%) — same convention decideTargetAction already uses.
+      const cutPct = checkpointLabel === 'HIGH RISK — HARD STOP APPROACHING'
+        ? Math.min(0.15, settings.maxBidReductionPct)
+        : Math.min(0.10, settings.maxBidReductionPct);
+      recommendedBid = clampBid(target.currentBid * (1 - cutPct));
+    } else if (action !== 'REDUCE_BID') {
+      recommendedBid = target.currentBid;
+    }
+  } else {
+    checkpointLabel = targetCheckpointLabel({
+      baseAction: base.action, clicks: target.clicks, orders: target.orders, delivery: target.delivery,
+      remainingAllowance: Math.max(0, Math.round((risk.maxTestingSpend - target.spend) * 100) / 100),
+      avgCpc: target.clicks > 0 ? target.spend / target.clicks : null,
+    });
+  }
+
   // Estimated impact: dollars of margin headroom currently being captured
   // (positive, opportunity) for growth actions, or dollars currently
   // exposed (negative, at risk) for risk-reduction actions. Both are
@@ -176,11 +272,8 @@ export function deriveTargetDecisionAction(
   }
 
   const remainingTestAllowance = Math.max(0, Math.round((risk.maxTestingSpend - target.spend) * 100) / 100);
-  const avgCpc = target.clicks > 0 ? target.spend / target.clicks : null;
-  const checkpointLabel = targetCheckpointLabel({
-    baseAction: base.action, clicks: target.clicks, orders: target.orders, delivery: target.delivery,
-    remainingAllowance: remainingTestAllowance, avgCpc,
-  });
+  const remainingToTargetCpaReview = target.orders === 0 && targetCpaValue !== null ? Math.max(0, Math.round((targetCpaValue - target.spend) * 100) / 100) : null;
+  const remainingToBreakEvenStop = target.orders === 0 && breakEvenCpaValue !== null ? Math.max(0, Math.round((breakEvenCpaValue - target.spend) * 100) / 100) : null;
 
   return {
     scope: 'TARGET',
@@ -211,42 +304,35 @@ export function deriveTargetDecisionAction(
     conversionEvidence: conversionEvidenceFor(target.clicks, target.orders),
     checkpointLabel,
     remainingTestAllowance,
-    targetCpa: manualEconomics?.complete ? manualEconomics.maxCpaForTargetProfit : null,
-    breakEvenCpa: manualEconomics?.complete ? manualEconomics.breakEvenCpa : null,
+    targetCpa: targetCpaValue,
+    breakEvenCpa: breakEvenCpaValue,
+    remainingToTargetCpaReview,
+    remainingToBreakEvenStop,
     delivery: target.delivery,
   };
 }
 
-// Campaign-level equivalent of targetCheckpointLabel — same "real observed
-// figures only" rule, just working from the campaign action already decided
-// (INCREASE_BUDGET / REDUCE_BUDGET / KEEP / HOLD_COLLECT_DATA) instead of
-// the target's TargetActionType.
+// Campaign cards SUMMARIZE — the actionable, evidence-driven recommendation
+// (including the zero-order CPA ladder above) lives on the keyword/target
+// card underneath. This deliberately does NOT mirror targetCheckpointLabel
+// or the CPA ladder: showing the same "WATCH — $X remaining" style message
+// at both the campaign and target level created misleading duplicate
+// priority in the ranked list (the same underlying situation counted
+// twice). A campaign card only earns its own distinct message for a
+// genuinely campaign-level fact — traffic status or a budget decision —
+// everything else just points down to the target cards.
 function campaignCheckpointLabel(params: {
   action: DecisionActionType;
-  clicks: number;
-  orders: number;
   delivery: DeliveryStatus;
-  remainingAllowance: number;
 }): string {
-  const { action, clicks, orders, delivery, remainingAllowance } = params;
+  const { action, delivery } = params;
 
   if (action === 'HOLD_COLLECT_DATA' && delivery === 'NO_DELIVERY') return 'NO TRAFFIC — CONSIDER BID INCREASE';
   if (action === 'HOLD_COLLECT_DATA' && delivery === 'LOW_DELIVERY') return 'LOW DELIVERY — DO NOT PAUSE';
-
-  if (action === 'HOLD_COLLECT_DATA') {
-    if (clicks === 0) {
-      return 'HOLD — COLLECT MORE TRAFFIC';
-    }
-    if (orders === 0 && remainingAllowance <= 2) {
-      return `STOP-LOSS APPROACHING — $${remainingAllowance.toFixed(2)} REMAINING`;
-    }
-    return `WATCH — $${remainingAllowance.toFixed(2)} REMAINING BEFORE REVIEW`;
-  }
-
   if (action === 'INCREASE_BUDGET') return 'INCREASE BUDGET — EFFICIENT AND BUDGET-CAPPED';
   if (action === 'REDUCE_BUDGET') return 'REDUCE BUDGET — ABOVE BREAK-EVEN AND BUDGET-CAPPED';
 
-  return 'ON TRACK — NO ACTION NEEDED';
+  return 'CAMPAIGN SUMMARY — SEE KEYWORD/TARGET RECOMMENDATIONS BELOW';
 }
 
 // Campaign-level actions are scoped to BUDGET only (INCREASE_BUDGET /
@@ -325,10 +411,16 @@ export function deriveCampaignDecisionAction(
       acos: campaign.acos,
     },
     conversionEvidence: conversionEvidenceFor(campaign.clicks, campaign.orders),
-    checkpointLabel: campaignCheckpointLabel({ action, clicks: campaign.clicks, orders: campaign.orders, delivery, remainingAllowance: remainingTestAllowance }),
+    checkpointLabel: campaignCheckpointLabel({ action, delivery }),
     remainingTestAllowance,
     targetCpa: manualEconomics?.complete ? manualEconomics.maxCpaForTargetProfit : null,
     breakEvenCpa: manualEconomics?.complete ? manualEconomics.breakEvenCpa : null,
+    // The two-CPA "remaining to review/stop" framing is a per-keyword bid
+    // concept — campaign cards summarize, so these stay null here even when
+    // economics are confirmed. See the target-level fields for the real
+    // recommendation.
+    remainingToTargetCpaReview: null,
+    remainingToBreakEvenStop: null,
     delivery,
   };
 }

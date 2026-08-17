@@ -21,7 +21,7 @@ export const FIELD_ALIASES: Record<string, string[]> = {
     'targeting', 'target', 'targeting expression', 'keyword text', 'keyword',
     'product targeting expression', 'customer search term targeting',
   ],
-  matchType: ['match type', 'matchtype', 'targeting type'],
+  matchType: ['match type', 'matchtype', 'targeting type', 'keyword match type', 'match'],
   targetingId: ['keyword id', 'target id', 'targeting id'],
   bid: ['bid', 'max bid', 'keyword bid'],
   impressions: ['impressions'],

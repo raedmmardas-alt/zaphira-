@@ -18,3 +18,11 @@ describe('spend alias resolution', () => {
     expect(map.spend).toBe('Spend');
   });
 });
+
+describe('matchType alias resolution', () => {
+  it('resolves the standard and less-common real-export variants to the canonical "matchType" field', () => {
+    for (const alias of ['Match type', 'MATCH TYPE', 'Targeting type', 'Keyword match type', 'Match']) {
+      expect(resolveCanonicalField(alias)).toBe('matchType');
+    }
+  });
+});

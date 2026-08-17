@@ -5,7 +5,7 @@ import { Table, Th, Td } from '../components/ui/Table';
 import { Badge, confidenceTone, decisionActionTone, deliveryTone, riskClassificationTone } from '../components/ui/Badge';
 import { useWorkspace } from '../state/useWorkspace';
 import { useAppStore } from '../state/store';
-import { formatCurrency, formatMultiplier, formatNumber, formatPercent } from '../lib/engine/metrics';
+import { formatCurrency, formatMatchType, formatMultiplier, formatNumber, formatPercent } from '../lib/engine/metrics';
 import { calculateProductEconomics } from '../lib/engine/productEconomicsManual';
 import { computeRisk } from '../lib/engine/riskEngine';
 import { deriveCampaignDecisionAction, deriveTargetDecisionAction, findSearchTermNegativeCandidates } from '../lib/engine/actionEngine';
@@ -41,6 +41,22 @@ function priorityScore(a: DecisionAction): number {
 
 function hasCurrentActivity(a: DecisionAction): boolean {
   return a.currentPerformance.impressions > 0 || a.currentPerformance.clicks > 0 || a.currentPerformance.spend > 0;
+}
+
+// Campaign cards summarize; the actionable recommendation lives on the
+// keyword/target card(s) underneath. Ranking a campaign card alongside its
+// own child target cards for the same underlying "0 orders, some spend"
+// situation would double-count the same fact and crowd out other
+// campaigns/targets that actually need attention. A campaign only earns a
+// ranked slot when it carries a genuinely campaign-level signal that no
+// target card would show: a real budget decision, or being blocked on
+// product mapping (which applies account-wide, not per-keyword).
+function isRankable(a: DecisionAction): boolean {
+  if (!hasCurrentActivity(a)) return false;
+  if (a.scope === 'CAMPAIGN') {
+    return a.action === 'INCREASE_BUDGET' || a.action === 'REDUCE_BUDGET' || a.productId === null;
+  }
+  return true;
 }
 
 export function DecisionCenter() {
@@ -111,11 +127,12 @@ export function DecisionCenter() {
   // have a nonzero estimatedImpact) and early-stage monitoring actions that
   // don't have enough conversions for a dollar estimate yet — so this list
   // stays useful even in a zero-order period, instead of going empty just
-  // because nothing qualifies for scaling. Only genuinely inactive rows
-  // (zero impressions, clicks, and spend this period) are excluded.
+  // because nothing qualifies for scaling. Campaign-scope entries are
+  // excluded unless they carry a genuine budget-level signal, so a
+  // campaign's card never just restates its own child target card.
   const rankedActions = useMemo(() => {
     const all: DecisionAction[] = [...targetDecisions, ...campaignDecisions];
-    const actionable = all.filter(hasCurrentActivity);
+    const actionable = all.filter(isRankable);
     return actionable
       .sort((a, b) => priorityScore(b) - priorityScore(a))
       .slice(0, 10);
@@ -229,11 +246,13 @@ export function DecisionCenter() {
               <Card key={`${a.scope}-${a.key}`}>
                 <div className="flex items-start justify-between gap-3">
                   <div className="min-w-0">
-                    <div className="text-xs font-semibold text-navy-400">#{i + 1} · {a.productName ?? 'Unmapped product'}</div>
-                    <div className="truncate text-sm font-semibold text-navy-900">
-                      {a.scope === 'TARGET' ? `${a.targetingText} (${a.matchType})` : a.campaign}
+                    <div className="text-xs font-semibold text-navy-400">
+                      #{i + 1} · {a.productName ?? 'Unmapped product'} {a.scope === 'CAMPAIGN' && <span className="text-navy-300">· CAMPAIGN SUMMARY</span>}
                     </div>
-                    {a.scope === 'TARGET' && <div className="truncate text-xs text-navy-500">{a.campaign} · {a.adGroup}</div>}
+                    <div className="truncate text-sm font-semibold text-navy-900">
+                      {a.scope === 'TARGET' ? `${a.targetingText} (${formatMatchType(a.matchType)})` : a.campaign}
+                    </div>
+                    {a.scope === 'TARGET' && <div className="truncate text-xs text-navy-500">{a.campaign} · {a.adGroup || '—'}</div>}
                   </div>
                   <Badge tone={decisionActionTone(a.action)}>{ACTION_LABEL[a.action]}</Badge>
                 </div>
@@ -251,23 +270,28 @@ export function DecisionCenter() {
                   <div>ACoS <span className="float-right font-medium text-navy-900">{formatPercent(a.currentPerformance.acos)}</span></div>
                 </div>
 
-                <div className="mt-3 grid grid-cols-2 gap-x-4 gap-y-1 border-t border-border-subtle pt-2 text-xs text-navy-600">
-                  <div>
-                    Spend vs Target CPA
-                    <span className="float-right font-medium text-navy-900">
-                      {a.targetCpa !== null ? `${formatCurrency(a.currentPerformance.spend)} / ${formatCurrency(a.targetCpa)}` : 'Set target profit'}
-                    </span>
+                {a.scope === 'TARGET' ? (
+                  <div className="mt-3 grid grid-cols-2 gap-x-4 gap-y-1 border-t border-border-subtle pt-2 text-xs text-navy-600">
+                    <div>
+                      Remaining to Target CPA Review
+                      <span className="float-right font-medium text-navy-900">
+                        {a.remainingToTargetCpaReview !== null ? formatCurrency(a.remainingToTargetCpaReview) : a.currentPerformance.orders > 0 ? 'N/A (has orders)' : 'Set target profit'}
+                      </span>
+                    </div>
+                    <div>
+                      Remaining to Break-even Stop
+                      <span className="float-right font-medium text-navy-900">
+                        {a.remainingToBreakEvenStop !== null ? formatCurrency(a.remainingToBreakEvenStop) : a.currentPerformance.orders > 0 ? 'N/A (has orders)' : 'Economics incomplete'}
+                      </span>
+                    </div>
+                    <div>Traffic / Delivery <span className="float-right font-medium text-navy-900">{DELIVERY_LABEL[a.delivery]}</span></div>
+                    <div>Conversion Evidence <span className="float-right font-medium text-navy-900">{a.conversionEvidence}</span></div>
                   </div>
-                  <div>
-                    Spend vs Break-even CPA
-                    <span className="float-right font-medium text-navy-900">
-                      {a.breakEvenCpa !== null ? `${formatCurrency(a.currentPerformance.spend)} / ${formatCurrency(a.breakEvenCpa)}` : 'Economics incomplete'}
-                    </span>
+                ) : (
+                  <div className="mt-3 border-t border-border-subtle pt-2 text-xs text-navy-500">
+                    Campaign-level budget summary — the specific recommendation for this campaign's keywords/targets is on their own cards above.
                   </div>
-                  <div>Remaining Test Allowance <span className="float-right font-medium text-navy-900">{formatCurrency(a.remainingTestAllowance)}</span></div>
-                  <div>Traffic / Delivery <span className="float-right font-medium text-navy-900">{DELIVERY_LABEL[a.delivery]}</span></div>
-                  <div>Conversion Evidence <span className="float-right font-medium text-navy-900">{a.conversionEvidence}</span></div>
-                </div>
+                )}
 
                 {(a.recommendedBid !== null || a.recommendedBudget !== null) && (
                   <div className="mt-3 rounded-lg bg-navy-900/[0.03] px-3 py-2 text-sm font-medium text-navy-900">

@@ -6,7 +6,7 @@ import { Badge, actionTone, confidenceTone, deliveryTone, riskTone } from '../co
 import { DELIVERY_LABEL } from '../lib/engine/delivery';
 import { useWorkspace } from '../state/useWorkspace';
 import { useAppStore } from '../state/store';
-import { formatCurrency, formatPercent } from '../lib/engine/metrics';
+import { formatCurrency, formatMatchType, formatPercent } from '../lib/engine/metrics';
 import { downloadCsv } from '../lib/export/csv';
 import type { EnrichedTarget } from '../types';
 
@@ -134,7 +134,7 @@ export function Keywords() {
                     <Td><MapProductCell target={t} /></Td>
                     <Td className="max-w-[160px] truncate text-xs text-navy-600">{t.adGroup}</Td>
                     <Td className="max-w-[220px] truncate font-medium text-navy-900">{t.targetingText}</Td>
-                    <Td className="text-xs">{t.matchType}</Td>
+                    <Td className="text-xs">{formatMatchType(t.matchType)}</Td>
                     <Td className="max-w-[160px] truncate text-xs text-navy-600">{t.campaign}</Td>
                     <Td>{t.currentBid !== null ? formatCurrency(t.currentBid) : '—'}</Td>
                     <Td>{t.impressions.toLocaleString()}</Td>

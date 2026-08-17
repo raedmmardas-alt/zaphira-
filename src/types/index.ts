@@ -578,8 +578,17 @@ export interface DecisionAction {
   remainingTestAllowance: number;
   // Manual per-product economics dollar figures, when confirmed. Null,
   // never guessed, when Amazon Fees haven't been entered/confirmed.
-  targetCpa: number | null; // Maximum CPA for target profit
-  breakEvenCpa: number | null; // Break-even CPA
+  targetCpa: number | null; // Maximum CPA for target profit — the soft review threshold
+  breakEvenCpa: number | null; // Break-even CPA — the hard stop-loss threshold
+  // Two DISTINCT remaining-budget figures, both simple (threshold - spend),
+  // floored at 0. Never conflate these: targetCpa is a soft review trigger
+  // that preserves the product's target profit; breakEvenCpa is the hard
+  // economic floor. Null when the respective CPA figure isn't available
+  // (economics incomplete) or when there are already orders (spend-vs-CPA
+  // framing only applies pre-conversion). Populated for zero-order targets
+  // only.
+  remainingToTargetCpaReview: number | null;
+  remainingToBreakEvenStop: number | null;
   delivery: DeliveryStatus;
 }
 

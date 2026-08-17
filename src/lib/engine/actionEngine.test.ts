@@ -148,6 +148,69 @@ describe('deriveTargetDecisionAction', () => {
       expect(withoutEcon.breakEvenCpa).toBeNull();
     });
   });
+
+  describe('zero-order two-CPA financial guardrail ladder (Max CPA Target vs Break-even CPA)', () => {
+    // Max CPA Target = $6.99 (soft review threshold, preserves $5 target profit)
+    // Break-even CPA = $11.99 (hard economic stop-loss threshold)
+    const manualEcon = { productId: 'rose', complete: true as const, missingFields: [], contributionBeforeAdvertising: 11.99, breakEvenCpa: 11.99, breakEvenAcos: 0.6, maxCpaForTargetProfit: 6.99, targetAcos: 0.35 };
+
+    it('computes both remaining-to figures as simple subtraction from spend, floored at 0 (e.g. $5.59 spent -> $1.40 / $6.40 remaining)', () => {
+      const d = deriveTargetDecisionAction(target({ clicks: 8, spend: 5.59, orders: 0, action: baseAction({ action: 'WATCH' }) }), riskFor({ clicks: 8, spend: 5.59 }), null, DEFAULT_SETTINGS, manualEcon);
+      expect(d.remainingToTargetCpaReview).toBeCloseTo(1.40);
+      expect(d.remainingToBreakEvenStop).toBeCloseTo(6.40);
+    });
+
+    it('holds / collects data when spend is well below the target CPA', () => {
+      const d = deriveTargetDecisionAction(target({ clicks: 8, spend: 2, orders: 0, action: baseAction({ action: 'WATCH' }) }), riskFor({ clicks: 8, spend: 2 }), null, DEFAULT_SETTINGS, manualEcon);
+      expect(d.action).toBe('HOLD_COLLECT_DATA');
+      expect(d.checkpointLabel).toBe('HOLD / COLLECT DATA');
+    });
+
+    it('watches / reviews soon when spend is approaching (>=80% of) the target CPA', () => {
+      const d = deriveTargetDecisionAction(target({ clicks: 8, spend: 6, orders: 0, action: baseAction({ action: 'WATCH' }) }), riskFor({ clicks: 8, spend: 6 }), null, DEFAULT_SETTINGS, manualEcon);
+      expect(d.action).toBe('WATCH');
+      expect(d.checkpointLabel).toBe('WATCH — REVIEW SOON');
+    });
+
+    it('flags target CPA exceeded once spend reaches the target CPA with zero orders', () => {
+      const d = deriveTargetDecisionAction(target({ clicks: 10, spend: 7.5, orders: 0, action: baseAction({ action: 'WATCH' }) }), riskFor({ clicks: 10, spend: 7.5 }), null, DEFAULT_SETTINGS, manualEcon);
+      expect(d.action).toBe('REDUCE_BID');
+      expect(d.checkpointLabel).toBe('TARGET CPA EXCEEDED — CONSIDER BID REDUCTION');
+    });
+
+    it('flags high risk / hard stop approaching once spend nears (>=80% of) the break-even CPA', () => {
+      const d = deriveTargetDecisionAction(target({ clicks: 15, spend: 10, orders: 0, action: baseAction({ action: 'REDUCE_BID' }) }), riskFor({ clicks: 15, spend: 10 }), null, DEFAULT_SETTINGS, manualEcon);
+      expect(d.action).toBe('REDUCE_BID');
+      expect(d.checkpointLabel).toBe('HIGH RISK — HARD STOP APPROACHING');
+    });
+
+    it('recommends a strong pause/reduction once spend meets or exceeds the break-even CPA with zero orders', () => {
+      const d = deriveTargetDecisionAction(target({ clicks: 25, spend: 12.5, orders: 0, action: baseAction({ action: 'NEGATIVE_PAUSE_CANDIDATE' }) }), riskFor({ clicks: 25, spend: 12.5 }), null, DEFAULT_SETTINGS, manualEcon);
+      expect(d.action).toBe('PAUSE');
+      expect(d.checkpointLabel).toBe('BREAK-EVEN EXCEEDED — STRONG PAUSE/REDUCTION RECOMMENDATION');
+      expect(d.recommendedBid).toBeNull();
+    });
+
+    it('the ladder never fires with fewer than 5 clicks — sample-size safeguard is preserved even with confirmed economics', () => {
+      const d = deriveTargetDecisionAction(target({ clicks: 2, spend: 8, orders: 0, action: baseAction({ action: 'WAIT' }) }), riskFor({ clicks: 2, spend: 8 }), null, DEFAULT_SETTINGS, manualEcon);
+      expect(d.action).toBe('HOLD_COLLECT_DATA');
+      expect(d.checkpointLabel).toMatch(/COLLECT \d+ MORE CLICK/);
+    });
+
+    it('never applies the ladder once there is a real order — spend-vs-CPA framing is pre-conversion only', () => {
+      const d = deriveTargetDecisionAction(target({ clicks: 10, spend: 12.5, orders: 1, sales: 20, acos: 0.625, action: baseAction({ action: 'WATCH' }) }), riskFor({ clicks: 10, spend: 12.5, orders: 1 }), 0.6, DEFAULT_SETTINGS, manualEcon);
+      expect(d.remainingToTargetCpaReview).toBeNull();
+      expect(d.remainingToBreakEvenStop).toBeNull();
+    });
+
+    it('uses a smaller bid cut for the soft target-CPA-exceeded state than for the hard-stop-approaching state', () => {
+      const soft = deriveTargetDecisionAction(target({ clicks: 10, spend: 7.5, orders: 0, currentBid: 1.0, action: baseAction({ action: 'WATCH' }) }), riskFor({ clicks: 10, spend: 7.5 }), null, DEFAULT_SETTINGS, manualEcon);
+      const hard = deriveTargetDecisionAction(target({ clicks: 15, spend: 10, orders: 0, currentBid: 1.0, action: baseAction({ action: 'REDUCE_BID' }) }), riskFor({ clicks: 15, spend: 10 }), null, DEFAULT_SETTINGS, manualEcon);
+      expect(soft.recommendedBid).not.toBeNull();
+      expect(hard.recommendedBid).not.toBeNull();
+      expect(hard.recommendedBid!).toBeLessThan(soft.recommendedBid!);
+    });
+  });
 });
 
 describe('deriveCampaignDecisionAction', () => {
@@ -197,6 +260,20 @@ describe('deriveCampaignDecisionAction', () => {
     const d = deriveCampaignDecisionAction(c, riskFor({ clicks: 0, spend: 0, delivery: 'NO_DELIVERY' }), 0.5, 'NO_DELIVERY');
     expect(d.checkpointLabel).toBe('NO TRAFFIC — CONSIDER BID INCREASE');
     expect(d.delivery).toBe('NO_DELIVERY');
+  });
+
+  it('campaign cards summarize, never mirror the target-level two-CPA ladder or its "remaining to review" figures', () => {
+    const manualEcon = { productId: 'rose', complete: true as const, missingFields: [], contributionBeforeAdvertising: 11.99, breakEvenCpa: 11.99, breakEvenAcos: 0.6, maxCpaForTargetProfit: 6.99, targetAcos: 0.35 };
+    // Same shape a zero-order target would hit "TARGET CPA EXCEEDED" on — a
+    // campaign card must never restate that message; it's a per-keyword bid
+    // concept, and duplicating it here creates the misleading duplicate
+    // priority the campaign-vs-target hierarchy fix exists to prevent.
+    const c = campaign({ spend: 7.5, clicks: 10, orders: 0, sales: 0, acos: null, budget: 20 });
+    const d = deriveCampaignDecisionAction(c, riskFor({ clicks: 10, spend: 7.5, orders: 0 }), 0.5, 'DELIVERING', manualEcon);
+    expect(d.checkpointLabel).not.toMatch(/TARGET CPA EXCEEDED|BREAK-EVEN EXCEEDED|HARD STOP/);
+    expect(d.checkpointLabel).toBe('CAMPAIGN SUMMARY — SEE KEYWORD/TARGET RECOMMENDATIONS BELOW');
+    expect(d.remainingToTargetCpaReview).toBeNull();
+    expect(d.remainingToBreakEvenStop).toBeNull();
   });
 
   it('surfaces targetCpa/breakEvenCpa from manual economics when passed through', () => {

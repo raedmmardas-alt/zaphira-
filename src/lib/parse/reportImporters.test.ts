@@ -71,3 +71,23 @@ describe('Amazon "Total cost" column recognition (real-format regression)', () =
     expect(advertisedProduct.rows[0].spend).toBe(16.0);
   });
 });
+
+describe('Targeting report matchType honesty (only "unknown" when the column is truly absent)', () => {
+  it('reads the real match type value when the column is present, under any of the recognized header variants', () => {
+    for (const header of ['Match type', 'Targeting type', 'Keyword match type', 'Match']) {
+      const { rows } = importTargetingReport(FILE, {
+        headers: ['Campaign name', 'Ad group name', 'Targeting', header, 'Impressions', 'Clicks', 'Total cost'],
+        rows: [{ 'Campaign name': 'Rose - Sponsored Products', 'Ad group name': 'Rose AG', Targeting: 'rose body butter', [header]: 'Broad', Impressions: '400', Clicks: '9', 'Total cost': '3.60' }],
+      });
+      expect(rows[0].matchType).toBe('Broad');
+    }
+  });
+
+  it('only falls back to the "unknown" sentinel when the report truly has no match-type column at all', () => {
+    const { rows } = importTargetingReport(FILE, {
+      headers: ['Campaign name', 'Ad group name', 'Targeting', 'Impressions', 'Clicks', 'Total cost'],
+      rows: [{ 'Campaign name': 'Rose - Sponsored Products', 'Ad group name': 'Rose AG', Targeting: 'rose body butter', Impressions: '400', Clicks: '9', 'Total cost': '3.60' }],
+    });
+    expect(rows[0].matchType).toBe('unknown');
+  });
+});
