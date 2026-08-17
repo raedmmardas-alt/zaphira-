@@ -3,6 +3,7 @@ import { NavLink } from 'react-router-dom';
 
 const NAV_ITEMS = [
   { to: '/', label: 'Dashboard', end: true },
+  { to: '/decision-center', label: 'Decision Center' },
   { to: '/campaigns', label: 'Campaigns' },
   { to: '/keywords', label: 'Keywords' },
   { to: '/search-terms', label: 'Search Terms' },

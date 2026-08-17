@@ -60,3 +60,33 @@ export function actionTone(action: string): BadgeTone {
     default: return 'neutral';
   }
 }
+
+// RiskClassification (LOW/MODERATE/HIGH/CRITICAL) — distinct vocabulary
+// from the base engine's Risk (LOW/MEDIUM/HIGH/BLOCKED) used by riskTone.
+export function riskClassificationTone(classification: string): BadgeTone {
+  switch (classification) {
+    case 'LOW': return 'positive';
+    case 'MODERATE': return 'watch';
+    case 'HIGH': return 'negative';
+    case 'CRITICAL': return 'negative';
+    default: return 'neutral';
+  }
+}
+
+// DecisionActionType — the expanded, non-technical action vocabulary.
+export function decisionActionTone(action: string): BadgeTone {
+  switch (action) {
+    case 'SCALE': return 'positive';
+    case 'INCREASE_BID': return 'positive';
+    case 'TEST_IN_PHRASE': return 'positive';
+    case 'MOVE_TO_EXACT': return 'positive';
+    case 'INCREASE_BUDGET': return 'positive';
+    case 'KEEP': return 'brand';
+    case 'HOLD_COLLECT_DATA': return 'wait';
+    case 'REDUCE_BID': return 'watch';
+    case 'REDUCE_BUDGET': return 'watch';
+    case 'PAUSE': return 'negative';
+    case 'ADD_NEGATIVE': return 'negative';
+    default: return 'neutral';
+  }
+}

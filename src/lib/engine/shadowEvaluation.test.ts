@@ -24,6 +24,8 @@ function snapshot(overrides: Partial<ShadowSnapshot>): ShadowSnapshot {
     beforeMetrics: { impressions: 1000, clicks: 30, spend: 20, orders: 0, sales: 0, acos: null, cvr: 0 },
     appliedManually: false,
     appliedAt: null,
+    status: 'PENDING',
+    statusUpdatedAt: null,
     ...overrides,
   };
 }
@@ -62,6 +64,20 @@ describe('evaluateShadowSnapshot', () => {
     const result = evaluateShadowSnapshot(snap, map, { start: '2026-08-01', end: '2026-08-31' });
     expect(result.outcome).toBe('INSUFFICIENT_DATA');
     expect(result.notes).toMatch(/observational only/i);
+  });
+
+  it('an ACCEPTED (but not applied) status still never counts toward directional accuracy', () => {
+    const snap = snapshot({ appliedManually: false, status: 'ACCEPTED' });
+    const map = new Map([[snap.targetKey, target({})]]);
+    const result = evaluateShadowSnapshot(snap, map, { start: '2026-08-01', end: '2026-08-31' });
+    expect(result.outcome).toBe('INSUFFICIENT_DATA');
+  });
+
+  it('a REJECTED status never counts toward directional accuracy', () => {
+    const snap = snapshot({ appliedManually: false, status: 'REJECTED' });
+    const map = new Map([[snap.targetKey, target({})]]);
+    const result = evaluateShadowSnapshot(snap, map, { start: '2026-08-01', end: '2026-08-31' });
+    expect(result.outcome).toBe('INSUFFICIENT_DATA');
   });
 
   it('evaluates POSITIVE for an applied snapshot with improved ACoS and steady/higher orders in a later period', () => {

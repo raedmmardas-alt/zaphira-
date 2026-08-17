@@ -3,6 +3,7 @@ import { BrowserRouter, Routes, Route } from 'react-router-dom';
 import { AppShell } from './components/layout/AppShell';
 import { useAppStore } from './state/store';
 import { Dashboard } from './pages/Dashboard';
+import { DecisionCenter } from './pages/DecisionCenter';
 import { Campaigns } from './pages/Campaigns';
 import { Keywords } from './pages/Keywords';
 import { SearchTerms } from './pages/SearchTerms';
@@ -27,6 +28,7 @@ export default function App() {
       <AppShell>
         <Routes>
           <Route path="/" element={<Dashboard />} />
+          <Route path="/decision-center" element={<DecisionCenter />} />
           <Route path="/campaigns" element={<Campaigns />} />
           <Route path="/keywords" element={<Keywords />} />
           <Route path="/search-terms" element={<SearchTerms />} />

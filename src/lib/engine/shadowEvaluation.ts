@@ -56,6 +56,8 @@ export function buildShadowSnapshotFromTarget(target: EnrichedTarget, savedAt: s
     },
     appliedManually: false,
     appliedAt: null,
+    status: 'PENDING',
+    statusUpdatedAt: null,
   };
 }
 

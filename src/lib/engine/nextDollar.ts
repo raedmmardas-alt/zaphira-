@@ -21,10 +21,14 @@ const RISK_PENALTY: Record<string, number> = { LOW: 0, MEDIUM: 0.3, HIGH: 0.7, B
 // Ranks candidates for incremental PPC investment. Only SCALE-eligible,
 // low/medium-risk, mapped targets with confirmed profitable economics are
 // considered — this deliberately does NOT rank by raw sales volume.
+// riskScoreByTargetKey (0-100, from the Intelligence Engine risk model) is
+// optional and, when supplied, refines the categorical risk penalty already
+// derived from the base action engine rather than replacing it.
 export function rankNextDollarCandidates(
   targets: EnrichedTarget[],
   economicsById: Record<string, ProductEconomics>,
   maxDailyPpcBudget: number,
+  riskScoreByTargetKey?: Record<string, number>,
 ): NextDollarResult {
   const eligible = targets.filter((t) => t.action.action === 'SCALE' && t.isCurrentPeriod && t.productId);
 
@@ -41,7 +45,11 @@ export function rankNextDollarCandidates(
     const breakEven = econ?.breakEvenAcos ?? null;
     const headroom = breakEven !== null && t.acos !== null ? Math.max(0, (breakEven - t.acos) / breakEven) : 0;
     const confidenceWeight = CONFIDENCE_WEIGHT[t.action.confidence] ?? 0;
-    const riskPenalty = RISK_PENALTY[t.action.risk] ?? 1;
+    const categoricalRiskPenalty = RISK_PENALTY[t.action.risk] ?? 1;
+    // Blend in the Intelligence Engine's numeric risk score when supplied,
+    // rather than relying solely on the coarser LOW/MEDIUM/HIGH bucket.
+    const numericRiskScore = riskScoreByTargetKey?.[t.key];
+    const riskPenalty = numericRiskScore !== undefined ? (categoricalRiskPenalty + numericRiskScore / 100) / 2 : categoricalRiskPenalty;
     const evidenceStrength = Math.min(1, t.orders / 10);
     const spendRoom = Math.max(0, 1 - t.spend / Math.max(1, maxDailyPpcBudget));
 

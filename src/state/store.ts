@@ -58,6 +58,8 @@ interface AppState {
   saveShadowSnapshot: (s: ShadowSnapshot) => void;
   saveShadowSnapshotBatch: (snapshots: ShadowSnapshot[]) => void;
   markShadowApplied: (id: string) => void;
+  markShadowAccepted: (id: string) => void;
+  markShadowRejected: (id: string) => void;
   setDeliveryWorkflowStatus: (targetKey: string, status: DeliveryWorkflowStatus, currentPeriod: DateRange | null) => void;
   addManualKeyword: (keyword: string, productId: string | null) => void;
   updateProductManualEconomics: (productId: string, partial: Partial<ProductManualEconomicsInputs>) => void;
@@ -243,7 +245,20 @@ export const useAppStore = create<AppState>((set, get) => ({
     void localDb.set(DB_KEYS.shadowSnapshots, next);
   },
   markShadowApplied: (id) => {
-    const next = get().shadowSnapshots.map((s) => (s.id === id ? { ...s, appliedManually: true, appliedAt: new Date().toISOString() } : s));
+    const now = new Date().toISOString();
+    const next = get().shadowSnapshots.map((s) => (s.id === id ? { ...s, appliedManually: true, appliedAt: now, status: 'APPLIED_MANUALLY' as const, statusUpdatedAt: now } : s));
+    set({ shadowSnapshots: next });
+    void localDb.set(DB_KEYS.shadowSnapshots, next);
+  },
+  markShadowAccepted: (id) => {
+    // Observational only — does NOT set appliedManually, so it never counts
+    // toward directional accuracy (only APPLIED_MANUALLY does).
+    const next = get().shadowSnapshots.map((s) => (s.id === id ? { ...s, status: 'ACCEPTED' as const, statusUpdatedAt: new Date().toISOString() } : s));
+    set({ shadowSnapshots: next });
+    void localDb.set(DB_KEYS.shadowSnapshots, next);
+  },
+  markShadowRejected: (id) => {
+    const next = get().shadowSnapshots.map((s) => (s.id === id ? { ...s, status: 'REJECTED' as const, statusUpdatedAt: new Date().toISOString() } : s));
     set({ shadowSnapshots: next });
     void localDb.set(DB_KEYS.shadowSnapshots, next);
   },

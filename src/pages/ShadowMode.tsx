@@ -25,6 +25,8 @@ export function ShadowMode() {
   const shadowSnapshots = useAppStore((s) => s.shadowSnapshots);
   const saveShadowSnapshotBatch = useAppStore((s) => s.saveShadowSnapshotBatch);
   const markShadowApplied = useAppStore((s) => s.markShadowApplied);
+  const markShadowAccepted = useAppStore((s) => s.markShadowAccepted);
+  const markShadowRejected = useAppStore((s) => s.markShadowRejected);
   const [query, setQuery] = useState('');
 
   // Comparison map uses the SAME composite key used to save snapshots, so
@@ -79,14 +81,14 @@ export function ShadowMode() {
       [
         'Saved At', 'Report Period', 'Product', 'ASIN', 'Campaign', 'Ad Group', 'Keyword', 'Match Type', 'Current Bid',
         'Impressions', 'Clicks', 'Spend', 'Orders', 'Sales', 'CVR', 'ACoS', 'Delivery',
-        'Recommended Action', 'Recommended Bid', 'Risk', 'Confidence', 'Applied Manually', 'Outcome',
+        'Recommended Action', 'Recommended Bid', 'Risk', 'Confidence', 'Status', 'Applied Manually', 'Outcome',
       ],
       evaluations.map(({ snapshot: s, evaluation: e }) => [
         s.savedAt, s.reportPeriod ? `${s.reportPeriod.start} to ${s.reportPeriod.end}` : '', s.productName ?? 'UNMAPPED', s.asin ?? '', s.campaign, s.adGroup, s.targetingText, s.matchType,
         s.currentBid ?? '',
         s.beforeMetrics.impressions, s.beforeMetrics.clicks, s.beforeMetrics.spend, s.beforeMetrics.orders, s.beforeMetrics.sales,
         s.beforeMetrics.cvr ?? '', s.beforeMetrics.acos ?? '', DELIVERY_LABEL[s.delivery],
-        s.recommendedAction, s.recommendedBid ?? '', s.risk, s.confidence, s.appliedManually ? 'YES' : 'NO', s.appliedManually ? e.outcome : 'NOT APPLIED — OBSERVATIONAL ONLY',
+        s.recommendedAction, s.recommendedBid ?? '', s.risk, s.confidence, s.status, s.appliedManually ? 'YES' : 'NO', s.appliedManually ? e.outcome : 'NOT APPLIED — OBSERVATIONAL ONLY',
       ]),
     );
   }
@@ -163,7 +165,7 @@ export function ShadowMode() {
           actions={<button onClick={exportCsv} className="rounded-lg border border-border-subtle px-3 py-1.5 text-xs font-medium text-navy-700 hover:bg-navy-900/5">Download Shadow Mode CSV</button>}
         >
           <Table>
-            <thead><tr><Th>Saved</Th><Th>Product</Th><Th>Keyword</Th><Th>Delivery</Th><Th>Recommendation</Th><Th>Applied?</Th><Th>Outcome</Th><Th>Notes</Th></tr></thead>
+            <thead><tr><Th>Saved</Th><Th>Product</Th><Th>Keyword</Th><Th>Delivery</Th><Th>Recommendation</Th><Th>Status</Th><Th>Outcome</Th><Th>Notes</Th></tr></thead>
             <tbody>
               {evaluations.length === 0 && <tr><Td className="text-navy-500">No snapshots saved yet.</Td></tr>}
               {evaluations.map(({ snapshot: s, evaluation: e }) => (
@@ -176,8 +178,19 @@ export function ShadowMode() {
                   <Td>
                     {s.appliedManually ? (
                       <span className="text-xs font-medium text-positive-600">Applied {s.appliedAt ? new Date(s.appliedAt).toLocaleDateString() : ''}</span>
+                    ) : s.status === 'ACCEPTED' ? (
+                      <div className="flex items-center gap-1.5">
+                        <span className="text-xs font-medium text-brand-700">Accepted</span>
+                        <button onClick={() => markShadowApplied(s.id)} className="rounded border border-border-subtle px-2 py-1 text-xs hover:bg-navy-900/5">Mark Applied</button>
+                      </div>
+                    ) : s.status === 'REJECTED' ? (
+                      <span className="text-xs font-medium text-negative-600">Rejected</span>
                     ) : (
-                      <button onClick={() => markShadowApplied(s.id)} className="rounded border border-border-subtle px-2 py-1 text-xs hover:bg-navy-900/5">Mark Applied Manually</button>
+                      <div className="flex flex-wrap items-center gap-1.5">
+                        <button onClick={() => markShadowAccepted(s.id)} className="rounded border border-border-subtle px-2 py-1 text-xs hover:bg-navy-900/5">Accept</button>
+                        <button onClick={() => markShadowApplied(s.id)} className="rounded border border-border-subtle px-2 py-1 text-xs hover:bg-navy-900/5">Applied Manually</button>
+                        <button onClick={() => markShadowRejected(s.id)} className="rounded border border-border-subtle px-2 py-1 text-xs text-negative-600 hover:bg-negative-50">Reject</button>
+                      </div>
                     )}
                   </Td>
                   <Td>

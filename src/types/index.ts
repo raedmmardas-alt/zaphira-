@@ -442,7 +442,15 @@ export interface ShadowSnapshot {
   };
   appliedManually: boolean;
   appliedAt: string | null;
+  // Tri-state operator response, additive to appliedManually above.
+  // appliedManually remains the ONLY gate for directional-accuracy
+  // evaluation (failure mode #11) — status is purely a richer record of
+  // operator intent and is never itself read by evaluateShadowSnapshot.
+  status: ShadowRecommendationStatus;
+  statusUpdatedAt: string | null;
 }
+
+export type ShadowRecommendationStatus = 'PENDING' | 'ACCEPTED' | 'APPLIED_MANUALLY' | 'REJECTED';
 
 export type ShadowOutcome = 'POSITIVE' | 'MIXED' | 'NEGATIVE' | 'INSUFFICIENT_DATA' | 'NON_COMPARABLE_PERIOD';
 
@@ -451,6 +459,139 @@ export interface ShadowEvaluation {
   outcome: ShadowOutcome;
   afterMetrics: ShadowSnapshot['beforeMetrics'] | null;
   notes: string;
+}
+
+// ---------------------------------------------------------------------------
+// Risk & stop-loss (Intelligence Engine)
+// ---------------------------------------------------------------------------
+
+export type RiskClassification = 'LOW' | 'MODERATE' | 'HIGH' | 'CRITICAL';
+
+export interface RiskBreakdown {
+  // Each dimension is 0-100, higher = riskier.
+  spendRisk: number;
+  conversionRisk: number;
+  profitabilityRisk: number;
+  deliveryRisk: number;
+  // Sample-size/data-sufficiency risk. Explicitly SEPARATE from the other
+  // dimensions — low sample size increases this alone, it never inflates
+  // conversion/profitability risk by itself (insufficient data must not be
+  // read as poor performance).
+  dataConfidenceRisk: number;
+  overallScore: number; // 0-100 weighted composite
+  classification: RiskClassification;
+  // Maximum $ this target/campaign should be tested with before a stop-loss
+  // action is warranted.
+  maxTestingSpend: number;
+  maxTestingSpendSource: 'PRODUCT_ECONOMICS' | 'SETTINGS_FALLBACK';
+  reasons: string[];
+}
+
+// ---------------------------------------------------------------------------
+// Prediction (Intelligence Engine) — conservative, range-based, never guaranteed
+// ---------------------------------------------------------------------------
+
+export type ForecastHorizon = 'NEXT_3_DAYS' | 'NEXT_7_DAYS' | 'NEXT_30_DAYS';
+
+export interface ForecastRange {
+  low: number;
+  expected: number;
+  high: number;
+}
+
+export interface ForecastResult {
+  horizon: ForecastHorizon;
+  horizonDays: number;
+  observedDays: number;
+  confidence: Confidence;
+  spend: ForecastRange;
+  clicks: ForecastRange;
+  orders: ForecastRange;
+  sales: ForecastRange;
+  cpa: number | null; // expected-case only; null when expected orders round to 0
+  acos: number | null; // expected-case only; null when expected sales are 0
+  estimatedProfit: ForecastRange | null; // null when product economics are incomplete
+  isEstimate: true;
+  disclaimer: string;
+}
+
+// ---------------------------------------------------------------------------
+// Action Engine (Intelligence Engine) — expanded, explainable action vocabulary
+// ---------------------------------------------------------------------------
+
+export type DecisionActionType =
+  | 'SCALE'
+  | 'INCREASE_BID'
+  | 'KEEP'
+  | 'HOLD_COLLECT_DATA'
+  | 'REDUCE_BID'
+  | 'PAUSE'
+  | 'TEST_IN_PHRASE'
+  | 'MOVE_TO_EXACT'
+  | 'ADD_NEGATIVE'
+  | 'INCREASE_BUDGET'
+  | 'REDUCE_BUDGET';
+
+export interface DecisionAction {
+  scope: 'TARGET' | 'CAMPAIGN';
+  key: string;
+  productId: string | null;
+  productName: string | null;
+  campaign: string;
+  adGroup: string | null;
+  targetingText: string | null;
+  matchType: string | null;
+  action: DecisionActionType;
+  currentBid: number | null;
+  recommendedBid: number | null;
+  currentBudget: number | null;
+  recommendedBudget: number | null;
+  reason: string;
+  risk: RiskBreakdown;
+  confidence: Confidence;
+  // Signed dollar estimate: positive = incremental opportunity, negative =
+  // amount currently at risk / recoverable by acting. Always an estimate.
+  estimatedImpact: number;
+  currentPerformance: {
+    impressions: number;
+    clicks: number;
+    spend: number;
+    orders: number;
+    sales: number;
+    acos: number | null;
+  };
+}
+
+// ---------------------------------------------------------------------------
+// Variant Intelligence (Intelligence Engine)
+// ---------------------------------------------------------------------------
+
+export interface VariantMetricRow {
+  productId: string;
+  productName: string;
+  impressions: number;
+  clicks: number;
+  ctr: number | null;
+  orders: number;
+  cvr: number | null;
+  spend: number;
+  sales: number;
+  cpa: number | null;
+  acos: number | null;
+  roas: number | null;
+  netProfit: number | null;
+  riskScore: number | null;
+}
+
+export interface VariantIntelligenceResult {
+  rows: VariantMetricRow[];
+  strongestTraffic: string | null;
+  bestCtr: string | null;
+  bestConversion: string | null;
+  bestCpa: string | null;
+  bestProfitability: string | null;
+  strongestScalingOpportunity: string | null;
+  highestRisk: string | null;
 }
 
 // ---------------------------------------------------------------------------
