@@ -16,6 +16,13 @@
   --color-brand-600: #3b5bfd;
   --color-brand-700: #2d46d6;
 
+  /* Soft rose accent — a restrained nod to the Zaphira beauty brand for
+     chart/data-viz use only; the rest of the interface keeps its existing
+     navy/brand palette untouched. */
+  --color-rose-600: #b8577a;
+  --color-rose-500: #cd7a97;
+  --color-rose-100: #f7e3ea;
+
   --color-positive-600: #1c8a5b;
   --color-positive-50: #eafaf2;
   --color-negative-600: #cc3b3b;

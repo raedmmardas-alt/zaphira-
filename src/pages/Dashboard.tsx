@@ -1,16 +1,20 @@
+import { useMemo } from 'react';
 import { BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, Cell } from 'recharts';
 import { PageHeader } from '../components/ui/PageHeader';
 import { Card } from '../components/ui/Card';
 import { KpiCard } from '../components/ui/KpiCard';
+import { Table, Th, Td } from '../components/ui/Table';
 import { Badge, actionTone, riskTone } from '../components/ui/Badge';
 import { AlignmentBanner } from '../components/AlignmentBanner';
 import { ReportCoverage } from '../components/ReportCoverage';
+import { PpcPerformanceChart } from '../components/PpcPerformanceChart';
 import { useWorkspace } from '../state/useWorkspace';
 import { useAppStore } from '../state/store';
-import { computeCpc, computeCtr, formatCurrency, formatNumber, formatPercent } from '../lib/engine/metrics';
+import { computeCpc, computeCtr, formatCurrency, formatMultiplier, formatNumber, formatPercent } from '../lib/engine/metrics';
 import { STRATEGY_LABEL } from '../lib/engine/strategy';
 import { rankNextDollarCandidates } from '../lib/engine/nextDollar';
 import { calculateProductEconomics } from '../lib/engine/productEconomicsManual';
+import { buildDailySeriesFromCampaigns, buildProductPerformanceRows } from '../lib/engine/ppcPerformanceSeries';
 import { blankManualEconomics } from '../types';
 
 export function Dashboard() {
@@ -18,6 +22,16 @@ export function Dashboard() {
   const settings = useAppStore((s) => s.settings);
   const products = useAppStore((s) => s.products);
   const productManualEconomics = useAppStore((s) => s.productManualEconomics);
+  const reportRows = useAppStore((s) => s.reportRows);
+
+  const dailySeries = useMemo(
+    () => buildDailySeriesFromCampaigns(reportRows.campaign, ws.currentPeriod),
+    [reportRows.campaign, ws.currentPeriod],
+  );
+  const productPerformanceRows = useMemo(
+    () => buildProductPerformanceRows(ws.campaigns, products),
+    [ws.campaigns, products],
+  );
 
   const currentTargets = ws.targets.filter((t) => t.isCurrentPeriod);
   const attentionItems = currentTargets
@@ -80,6 +94,41 @@ export function Dashboard() {
             />
           </div>
         </section>
+
+        {/* PPC Performance over time */}
+        <PpcPerformanceChart dailySeries={dailySeries} />
+
+        {/* Product Performance — Advertising */}
+        <Card
+          title="Product Performance — Advertising"
+          subtitle="Current-period ad performance by Zaphira product, from the uploaded Campaign report."
+        >
+          <Table>
+            <thead>
+              <tr>
+                <Th>Product</Th><Th>ASIN</Th><Th>Impressions</Th><Th>Clicks</Th><Th>CPC</Th><Th>Spend</Th><Th>Orders</Th><Th>Ad Sales</Th><Th>ACoS</Th><Th>ROAS</Th>
+              </tr>
+            </thead>
+            <tbody>
+              {productPerformanceRows.map((r) => (
+                <tr key={r.productId}>
+                  <Td className="font-medium text-navy-900">{r.productName}</Td>
+                  <Td className="font-mono text-xs text-navy-500">{r.asin}</Td>
+                  <Td>{formatNumber(r.impressions)}</Td>
+                  <Td>{formatNumber(r.clicks)}</Td>
+                  <Td>{formatCurrency(r.cpc)}</Td>
+                  <Td>{formatCurrency(r.spend)}</Td>
+                  <Td>{formatNumber(r.orders)}</Td>
+                  <Td>{formatCurrency(r.sales)}</Td>
+                  <Td>
+                    {r.acos !== null ? formatPercent(r.acos) : <span className="text-navy-400">{r.spend > 0 ? 'No ad sales' : '—'}</span>}
+                  </Td>
+                  <Td>{formatMultiplier(r.roas)}</Td>
+                </tr>
+              ))}
+            </tbody>
+          </Table>
+        </Card>
 
         {/* 2. Product Performance */}
         <section>
