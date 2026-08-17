@@ -17,6 +17,8 @@ import { classifyProductStrategy } from '../lib/engine/strategy';
 import { runReconciliation, worstStatus } from '../lib/aggregate/reconciliation';
 
 export interface Kpis {
+  impressions: number;
+  clicks: number;
   attributedSales: number;
   ppcSpend: number;
   orders: number;
@@ -141,7 +143,13 @@ export function buildWorkspace(
   const accountNetProfitEntry = currentPeriod ? accountNetProfitByPeriod[periodKey(currentPeriod)] ?? null : null;
 
   // --- KPIs ---
+  // Traffic + spend/sales/orders KPIs all come from the same source (current-
+  // period Campaign report rows), so Impressions/Clicks/CTR/CPC stay
+  // consistent with PPC Spend/Orders/Attributed Sales rather than mixing in
+  // a different report's totals.
   const currentCampaigns = campaigns.filter((c) => c.isCurrentPeriod);
+  const impressions = currentCampaigns.reduce((a, c) => a + c.impressions, 0);
+  const clicks = currentCampaigns.reduce((a, c) => a + c.clicks, 0);
   const attributedSales = currentCampaigns.reduce((a, c) => a + c.sales, 0);
   const ppcSpend = currentCampaigns.reduce((a, c) => a + c.spend, 0);
   const orders = currentCampaigns.reduce((a, c) => a + c.orders, 0);
@@ -159,6 +167,9 @@ export function buildWorkspace(
     campaigns,
     searchTerms,
     accountNetProfitEntry,
-    kpis: { attributedSales, ppcSpend, orders, acos, productProfit, accountNetProfit: accountNetProfitEntry?.accountNetProfit ?? null },
+    kpis: {
+      impressions, clicks, attributedSales, ppcSpend, orders, acos, productProfit,
+      accountNetProfit: accountNetProfitEntry?.accountNetProfit ?? null,
+    },
   };
 }

@@ -57,3 +57,38 @@ describe('Account Net Profit period isolation (failure mode #5)', () => {
     expect(ws.kpis.accountNetProfit).toBe(120);
   });
 });
+
+describe('Business Overview traffic KPIs (Impressions/Clicks/CTR/Average CPC)', () => {
+  it('matches the real Aug 14-16 observed activity exactly, with ACoS unavailable when sales are zero', () => {
+    const period = { start: '2026-08-14', end: '2026-08-16' };
+    const campaignRows: CampaignRow[] = [
+      { campaign: 'Rose - Sponsored Products', impressions: 900, clicks: 5, spend: 6.10, orders: 0, sales: 0, activityStart: period.start, activityEnd: period.end },
+      { campaign: 'Vanilla - Sponsored Products', impressions: 777, clicks: 3, spend: 3.28, orders: 0, sales: 0, activityStart: period.start, activityEnd: period.end },
+    ];
+
+    const ws = buildWorkspace(
+      { campaign: campaignMeta(period), targeting: campaignMeta(period) },
+      { ...EMPTY_ROWS, campaign: campaignRows },
+      [],
+      [],
+      DEFAULT_SETTINGS,
+      {},
+    );
+
+    expect(ws.currentPeriod).toEqual(period);
+    expect(ws.kpis.impressions).toBe(1677);
+    expect(ws.kpis.clicks).toBe(8);
+    expect(ws.kpis.ppcSpend).toBeCloseTo(9.38);
+    expect(ws.kpis.orders).toBe(0);
+    expect(ws.kpis.attributedSales).toBe(0);
+
+    // ACoS must be unavailable (null), never a misleading 0%, since sales are zero.
+    expect(ws.kpis.acos).toBeNull();
+
+    // CTR ~0.48%, Average CPC ~$1.17 (derived at display time from the same KPIs).
+    const ctr = ws.kpis.clicks / ws.kpis.impressions;
+    const cpc = ws.kpis.ppcSpend / ws.kpis.clicks;
+    expect(ctr).toBeCloseTo(0.0048, 3);
+    expect(cpc).toBeCloseTo(1.17, 2);
+  });
+});

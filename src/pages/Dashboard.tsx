@@ -7,7 +7,7 @@ import { AlignmentBanner } from '../components/AlignmentBanner';
 import { ReportCoverage } from '../components/ReportCoverage';
 import { useWorkspace } from '../state/useWorkspace';
 import { useAppStore } from '../state/store';
-import { formatCurrency, formatPercent } from '../lib/engine/metrics';
+import { computeCpc, computeCtr, formatCurrency, formatNumber, formatPercent } from '../lib/engine/metrics';
 import { STRATEGY_LABEL } from '../lib/engine/strategy';
 import { rankNextDollarCandidates } from '../lib/engine/nextDollar';
 
@@ -55,6 +55,10 @@ export function Dashboard() {
         <section>
           <h2 className="mb-3 text-sm font-semibold text-navy-700">Business Overview</h2>
           <div className="grid grid-cols-2 gap-4 md:grid-cols-3 lg:grid-cols-6">
+            <KpiCard label="Impressions" value={formatNumber(ws.kpis.impressions)} />
+            <KpiCard label="Clicks" value={formatNumber(ws.kpis.clicks)} />
+            <KpiCard label="CTR" value={formatPercent(computeCtr(ws.kpis.clicks, ws.kpis.impressions), 2)} />
+            <KpiCard label="Average CPC" value={formatCurrency(computeCpc(ws.kpis.ppcSpend, ws.kpis.clicks))} />
             <KpiCard label="Attributed Sales" value={formatCurrency(ws.kpis.attributedSales)} />
             <KpiCard label="PPC Spend" value={formatCurrency(ws.kpis.ppcSpend)} />
             <KpiCard label="Orders" value={ws.kpis.orders.toLocaleString()} />
@@ -190,6 +194,7 @@ export function Dashboard() {
           <Card title="PPC Health">
             <div className="space-y-2 text-sm">
               <div className="flex items-center justify-between"><span className="text-navy-600">Data reconciliation</span><Badge tone={ws.reconciliation.status === 'DATA_RECONCILED' ? 'positive' : ws.reconciliation.status === 'SMALL_ATTRIBUTION_DIFFERENCE' ? 'watch' : 'negative'}>{ws.reconciliation.status.replace(/_/g, ' ')}</Badge></div>
+              <div className="flex items-center justify-between"><span className="text-navy-600">Current-period clicks</span><span className="font-medium text-navy-900">{formatNumber(ws.kpis.clicks)}</span></div>
               <div className="flex items-center justify-between"><span className="text-navy-600">Current-period targets</span><span className="font-medium text-navy-900">{currentTargets.length}</span></div>
               <div className="flex items-center justify-between"><span className="text-navy-600">No/Low delivery</span><span className="font-medium text-navy-900">{currentTargets.filter((t) => t.delivery === 'NO_DELIVERY' || t.delivery === 'LOW_DELIVERY').length}</span></div>
               <div className="flex items-center justify-between"><span className="text-navy-600">Blocked (mapping required)</span><span className="font-medium text-negative-600">{currentTargets.filter((t) => t.action.risk === 'BLOCKED').length}</span></div>

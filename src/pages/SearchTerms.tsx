@@ -47,8 +47,8 @@ export function SearchTerms() {
   function exportSearchTermCsv() {
     downloadCsv(
       'zaphira_search_term_analysis.csv',
-      ['Product', 'Campaign', 'Ad Group', 'Search Term', 'Matched Target', 'Match Type', 'Orders', 'Sales', 'Spend', 'ACoS', 'Classification'],
-      filtered.map((s) => [s.productName ?? 'UNMAPPED', s.campaign, s.adGroup, s.searchTerm, s.targetingText, s.matchType, s.orders, s.sales.toFixed(2), s.spend.toFixed(2), s.acos !== null ? (s.acos * 100).toFixed(2) : '', s.classification]),
+      ['Product', 'Campaign', 'Ad Group', 'Search Term', 'Matched Target', 'Match Type', 'Impressions', 'Clicks', 'Orders', 'Sales', 'Spend', 'ACoS', 'Classification'],
+      filtered.map((s) => [s.productName ?? 'UNMAPPED', s.campaign, s.adGroup, s.searchTerm, s.targetingText, s.matchType, s.impressions, s.clicks, s.orders, s.sales.toFixed(2), s.spend.toFixed(2), s.acos !== null ? (s.acos * 100).toFixed(2) : '', s.classification]),
     );
   }
 
@@ -77,7 +77,7 @@ export function SearchTerms() {
             </select>
           </div>
           <Table>
-            <thead><tr><Th>Product</Th><Th>Search Term</Th><Th>Matched Target</Th><Th>Campaign</Th><Th>Orders</Th><Th>Sales</Th><Th>Spend</Th><Th>ACoS</Th><Th>Classification</Th></tr></thead>
+            <thead><tr><Th>Product</Th><Th>Search Term</Th><Th>Matched Target</Th><Th>Campaign</Th><Th>Impr.</Th><Th>Clicks</Th><Th>Orders</Th><Th>Sales</Th><Th>Spend</Th><Th>ACoS</Th><Th>Classification</Th></tr></thead>
             <tbody>
               {filtered.length === 0 && <tr><Td className="text-navy-500">No search term data yet. Import a Search Term report on the Dashboard.</Td></tr>}
               {filtered.slice(0, 500).map((s, i) => (
@@ -86,6 +86,8 @@ export function SearchTerms() {
                   <Td className="max-w-[240px] truncate font-medium text-navy-900">{s.searchTerm}</Td>
                   <Td className="max-w-[180px] truncate text-xs text-navy-600">{s.targetingText}</Td>
                   <Td className="max-w-[160px] truncate text-xs text-navy-600">{s.campaign}</Td>
+                  <Td>{s.impressions.toLocaleString()}</Td>
+                  <Td>{s.clicks.toLocaleString()}</Td>
                   <Td>{s.orders}</Td>
                   <Td>{formatCurrency(s.sales)}</Td>
                   <Td>{formatCurrency(s.spend)}</Td>
