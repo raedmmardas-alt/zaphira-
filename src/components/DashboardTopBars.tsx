@@ -99,7 +99,7 @@ export function DashboardTopBars() {
       {/* Daily PPC Budget / Target ACoS */}
       <div className="flex flex-wrap items-center gap-6 rounded-xl border border-border-subtle bg-rose-100/40 px-5 py-3">
         <NumberField label="Daily PPC Budget" value={settings.maxDailyPpcBudget} onChange={(v) => updateSettings({ maxDailyPpcBudget: v })} step={0.5} suffix="$" />
-        <NumberField label="Target ACoS" value={+(settings.targetAcosDefault * 100).toFixed(1)} onChange={(v) => updateSettings({ targetAcosDefault: v / 100 })} step={0.5} suffix="%" />
+        <NumberField label="Account Target ACoS" value={+(settings.targetAcosDefault * 100).toFixed(1)} onChange={(v) => updateSettings({ targetAcosDefault: v / 100 })} step={0.5} suffix="%" />
       </div>
     </div>
   );

@@ -6,7 +6,7 @@ import { Table, Th, Td } from '../components/ui/Table';
 import { Badge } from '../components/ui/Badge';
 import { useWorkspace } from '../state/useWorkspace';
 import { useAppStore } from '../state/store';
-import { formatCurrency, formatPercent } from '../lib/engine/metrics';
+import { formatCurrency, formatNumber, formatPercent } from '../lib/engine/metrics';
 import { computeBreakEvenScenario } from '../lib/engine/scenario';
 import { calculateProductEconomics } from '../lib/engine/productEconomicsManual';
 import { blankManualEconomics } from '../types';
@@ -21,16 +21,28 @@ export function ProfitCapital() {
   const updateProduct = useAppStore((s) => s.updateProduct);
   const productManualEconomics = useAppStore((s) => s.productManualEconomics);
   const updateProductManualEconomics = useAppStore((s) => s.updateProductManualEconomics);
+  const settings = useAppStore((s) => s.settings);
   const [scenarioProductId, setScenarioProductId] = useState<string>('');
   const [additionalSpend, setAdditionalSpend] = useState(10);
 
-  const totalSales = ws.economics.reduce((a, e) => a + e.totalSales, 0);
-  const ppcSpend = ws.economics.reduce((a, e) => a + e.ppcSpend, 0);
-  const productProfit = ws.economics.reduce((a, e) => a + e.netProfit, 0);
-  const tacos = totalSales > 0 ? ppcSpend / totalSales : null;
-  const margin = totalSales > 0 ? productProfit / totalSales : null;
+  // PPC Spend / Attributed Sales / Orders come from the reconciled Amazon
+  // Ads workspace data (same source as the Dashboard) — Amazon Ads reports
+  // provide these directly, so they must never depend on Sellerboard.
+  const ppcSpend = ws.kpis.ppcSpend;
+  const ppcAttributedSales = ws.kpis.attributedSales;
+  const ppcOrders = ws.kpis.orders;
+
+  // Total account sales, product profit, and anything derived from them are
+  // Sellerboard-only — Amazon Ads reports have no visibility into organic
+  // sales or true product cost. Never fabricate these as $0 when Sellerboard
+  // hasn't been imported; show them as unavailable instead.
+  const hasSellerboard = ws.economics.length > 0;
+  const totalAccountSales = hasSellerboard ? ws.economics.reduce((a, e) => a + e.totalSales, 0) : null;
+  const productProfit = ws.kpis.productProfit;
+  const tacos = totalAccountSales !== null && totalAccountSales > 0 ? ppcSpend / totalAccountSales : null;
+  const margin = totalAccountSales !== null && totalAccountSales > 0 && productProfit !== null ? productProfit / totalAccountSales : null;
   const accountNetProfit = ws.kpis.accountNetProfit;
-  const accountDifference = accountNetProfit !== null ? accountNetProfit - productProfit : null;
+  const accountDifference = accountNetProfit !== null && productProfit !== null ? accountNetProfit - productProfit : null;
 
   const scenarioTargets = useMemo(() => ws.targets.filter((t) => t.isCurrentPeriod && t.productId === scenarioProductId), [ws.targets, scenarioProductId]);
   const scenarioClicks = scenarioTargets.reduce((a, t) => a + t.clicks, 0);
@@ -47,30 +59,62 @@ export function ProfitCapital() {
     <div>
       <PageHeader title="Profit & Capital" subtitle="Financial decision screen — where capital is working and where it isn't." />
       <div className="space-y-6 p-8">
-        <div className="grid grid-cols-2 gap-4 md:grid-cols-4">
-          <KpiCard label="Total Sales" value={formatCurrency(totalSales)} />
-          <KpiCard label="PPC Spend" value={formatCurrency(ppcSpend)} />
-          <KpiCard label="Product Profit" value={formatCurrency(productProfit)} tone={productProfit >= 0 ? 'positive' : 'negative'} />
-          <KpiCard label="Account Net Profit" value={accountNetProfit !== null ? formatCurrency(accountNetProfit) : '—'} sublabel={accountNetProfit === null ? 'Not set for this period' : undefined} />
-          <KpiCard label="TACoS" value={formatPercent(tacos)} sublabel="PPC spend / total sales" />
-          <KpiCard label="Margin" value={formatPercent(margin)} />
-          <KpiCard
-            label="Account Reconciliation"
-            value={accountDifference !== null ? formatCurrency(accountDifference) : '—'}
-            sublabel="Account net profit − product profit (fees/adjustments)"
-            tone={accountDifference !== null ? (accountDifference >= 0 ? 'positive' : 'negative') : 'neutral'}
-          />
+        <div>
+          <div className="mb-2 text-[11px] font-semibold uppercase tracking-wide text-navy-400">From Amazon Ads (reconciled)</div>
+          <div className="grid grid-cols-2 gap-4 md:grid-cols-4">
+            <KpiCard label="PPC Spend" value={formatCurrency(ppcSpend)} />
+            <KpiCard label="PPC Attributed Sales" value={formatCurrency(ppcAttributedSales)} />
+            <KpiCard label="PPC Orders" value={formatNumber(ppcOrders)} />
+          </div>
+        </div>
+
+        <div>
+          <div className="mb-2 text-[11px] font-semibold uppercase tracking-wide text-navy-400">From Sellerboard (requires Sellerboard import)</div>
+          <div className="grid grid-cols-2 gap-4 md:grid-cols-4">
+            <KpiCard
+              label="Total Account Sales"
+              value={totalAccountSales !== null ? formatCurrency(totalAccountSales) : '—'}
+              sublabel={totalAccountSales === null ? 'Import Sellerboard Product Profitability' : undefined}
+            />
+            <KpiCard
+              label="Product Profit"
+              value={productProfit !== null ? formatCurrency(productProfit) : '—'}
+              sublabel={productProfit === null ? 'Import Sellerboard Product Profitability' : undefined}
+              tone={productProfit !== null ? (productProfit >= 0 ? 'positive' : 'negative') : 'neutral'}
+            />
+            <KpiCard
+              label="Account Net Profit"
+              value={accountNetProfit !== null ? formatCurrency(accountNetProfit) : '—'}
+              sublabel={accountNetProfit === null ? 'Not set for this period' : undefined}
+            />
+            <KpiCard
+              label="TACoS"
+              value={tacos !== null ? formatPercent(tacos) : '—'}
+              sublabel={tacos === null ? 'PPC spend / total account sales — requires Sellerboard' : 'PPC spend / total account sales'}
+            />
+            <KpiCard
+              label="Margin"
+              value={margin !== null ? formatPercent(margin) : '—'}
+              sublabel={margin === null ? 'Requires Sellerboard' : undefined}
+            />
+            <KpiCard
+              label="Account Reconciliation"
+              value={accountDifference !== null ? formatCurrency(accountDifference) : '—'}
+              sublabel="Account net profit − product profit (fees/adjustments)"
+              tone={accountDifference !== null ? (accountDifference >= 0 ? 'positive' : 'negative') : 'neutral'}
+            />
+          </div>
         </div>
 
         <Card
           title="Product Economics"
-          subtitle="Manual per-order inputs. Amazon Fees are never assumed — enter and confirm them for each product before its economics count as complete."
+          subtitle={`Manual per-order inputs. Amazon Fees are never assumed — enter and confirm them for each product before its economics count as complete. Account Target ACoS (Settings, applies to all products) is currently ${formatPercent(settings.targetAcosDefault)} — the "Product Economic Target ACoS" column below is calculated per-product from its own margin and target profit, and will not generally match the account setting.`}
         >
           <Table>
             <thead>
               <tr>
                 <Th>Product</Th><Th>Selling Price</Th><Th>COGS</Th><Th>Amazon Fees</Th><Th>Confirmed?</Th><Th>Seller-Funded Discount</Th><Th>Target Profit/Order</Th>
-                <Th>Contribution Before Ads</Th><Th>Break-even CPA</Th><Th>Break-even ACoS</Th><Th>Max CPA (Target)</Th><Th>Target ACoS</Th>
+                <Th>Contribution Before Ads</Th><Th>Break-even CPA</Th><Th>Break-even ACoS</Th><Th>Max CPA (Target)</Th><Th>Product Economic Target ACoS</Th>
               </tr>
             </thead>
             <tbody>

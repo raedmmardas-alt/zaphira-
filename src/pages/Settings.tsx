@@ -42,7 +42,7 @@ export function Settings() {
                 <option value="AGGRESSIVE_GROWTH">Aggressive Growth</option>
               </select>
             </label>
-            <NumberField label="Target ACoS" value={settings.targetAcosDefault * 100} onChange={(v) => updateSettings({ targetAcosDefault: v / 100 })} suffix="%" />
+            <NumberField label="Account Target ACoS" value={settings.targetAcosDefault * 100} onChange={(v) => updateSettings({ targetAcosDefault: v / 100 })} suffix="%" />
             <NumberField label="Max Daily PPC Budget" value={settings.maxDailyPpcBudget} onChange={(v) => updateSettings({ maxDailyPpcBudget: v })} suffix="$" />
             <NumberField label="Max Bid Increase" value={settings.maxBidIncreasePct * 100} onChange={(v) => updateSettings({ maxBidIncreasePct: v / 100 })} suffix="%" />
             <NumberField label="Max Bid Reduction" value={settings.maxBidReductionPct * 100} onChange={(v) => updateSettings({ maxBidReductionPct: v / 100 })} suffix="%" />

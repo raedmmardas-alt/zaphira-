@@ -165,7 +165,7 @@ export function Dashboard() {
                     {manualResult?.complete ? (
                       <>
                         <div className="flex justify-between"><span>Break-even ACoS (manual)</span><span className="font-medium text-navy-900">{formatPercent(manualResult.breakEvenAcos)}</span></div>
-                        <div className="flex justify-between"><span>Target ACoS (manual)</span><span className="font-medium text-navy-900">{manualResult.targetAcos !== null ? formatPercent(manualResult.targetAcos) : 'Set target profit'}</span></div>
+                        <div className="flex justify-between"><span>Product Economic Target ACoS</span><span className="font-medium text-navy-900">{manualResult.targetAcos !== null ? formatPercent(manualResult.targetAcos) : 'Set target profit'}</span></div>
                       </>
                     ) : (
                       <div className="text-navy-400">Economics incomplete{manualResult ? ` — missing: ${manualResult.missingFields.join(', ')}` : ''}</div>
