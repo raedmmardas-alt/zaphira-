@@ -2,22 +2,11 @@ import { useState } from 'react';
 import { PageHeader } from '../components/ui/PageHeader';
 import { Card } from '../components/ui/Card';
 import { Table, Th, Td } from '../components/ui/Table';
+import { NumberField } from '../components/ui/NumberField';
 import { useAppStore } from '../state/store';
 import { useWorkspace } from '../state/useWorkspace';
 import { formatCurrency } from '../lib/engine/metrics';
 import type { Product, StrategyPosture } from '../types';
-
-function NumberField({ label, value, onChange, step = 1, suffix }: { label: string; value: number; onChange: (v: number) => void; step?: number; suffix?: string }) {
-  return (
-    <label className="block">
-      <span className="mb-1 block text-xs font-medium text-navy-600">{label}</span>
-      <div className="flex items-center gap-1">
-        <input type="number" step={step} value={value} onChange={(e) => onChange(Number(e.target.value))} className="w-28 rounded-lg border border-border-subtle px-3 py-1.5 text-sm" />
-        {suffix && <span className="text-xs text-navy-500">{suffix}</span>}
-      </div>
-    </label>
-  );
-}
 
 export function Settings() {
   const settings = useAppStore((s) => s.settings);

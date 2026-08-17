@@ -8,6 +8,7 @@ import { Badge, actionTone, riskTone } from '../components/ui/Badge';
 import { AlignmentBanner } from '../components/AlignmentBanner';
 import { ReportCoverage } from '../components/ReportCoverage';
 import { PpcPerformanceChart } from '../components/PpcPerformanceChart';
+import { DashboardTopBars } from '../components/DashboardTopBars';
 import { useWorkspace } from '../state/useWorkspace';
 import { useAppStore } from '../state/store';
 import { computeCpc, computeCtr, formatCurrency, formatMultiplier, formatNumber, formatPercent } from '../lib/engine/metrics';
@@ -64,6 +65,9 @@ export function Dashboard() {
 
   return (
     <div>
+      <div className="border-b border-border-subtle bg-surface px-8 py-5">
+        <DashboardTopBars />
+      </div>
       <PageHeader title="Dashboard" subtitle="Where should the next advertising dollar go for profitable growth?" />
       <div className="space-y-6 p-8">
         <AlignmentBanner alignment={ws.alignment} />

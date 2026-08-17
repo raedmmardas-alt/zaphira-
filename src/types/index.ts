@@ -474,6 +474,11 @@ export interface Settings {
   deliveryThresholds: DeliveryThresholds;
   stopLossClicks: number;
   stopLossSpend: number;
+  // Reserved for future multi-marketplace/multi-currency support. Only a
+  // single option each is offered today (US / USD) — no conversion or
+  // marketplace-specific logic exists yet.
+  country: string;
+  currency: string;
 }
 
 export const DEFAULT_SETTINGS: Settings = {
@@ -489,6 +494,8 @@ export const DEFAULT_SETTINGS: Settings = {
   },
   stopLossClicks: 30,
   stopLossSpend: 25,
+  country: 'US',
+  currency: 'USD',
 };
 
 export const DEFAULT_PRODUCTS: Product[] = [
