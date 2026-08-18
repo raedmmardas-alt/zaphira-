@@ -25,6 +25,9 @@ export interface ReconciliationInputs {
   targetingSpend: number | null;
   searchTermSpend: number | null;
   advertisedProductSpend: number | null;
+  // May arrive positive or negative depending on the caller — Sellerboard's
+  // own export convention is a signed cost. runReconciliation normalizes
+  // this to magnitude itself before comparing; callers do not need to.
   sellerboardPpcSpend: number | null;
 }
 
@@ -36,7 +39,15 @@ export function runReconciliation(inputs: ReconciliationInputs): ReconciliationC
     checks.push(check('Targeting spend vs Advertised Product spend', inputs.targetingSpend, inputs.advertisedProductSpend));
   }
   if (inputs.sellerboardPpcSpend !== null) {
-    checks.push(check('Campaign spend vs Sellerboard PPC spend', inputs.campaignSpend, inputs.sellerboardPpcSpend));
+    // Sellerboard represents PPC/advertising expense as a SIGNED cost (e.g.
+    // -23.88), while Amazon's own reports always report spend as a positive
+    // number (e.g. +23.88). Reconciling the two must compare MAGNITUDE, not
+    // raw sign, or a correctly-matching pair of figures reads as a false
+    // "DATA MISMATCH REVIEW REQUIRED". Math.abs() is applied ONLY here, at
+    // this comparison — it must never be applied to the signed value used
+    // in profit/accounting math (ProductEconomics.ppcSpend in sellerboard.ts
+    // is a separate computation for that purpose and is untouched by this).
+    checks.push(check('Campaign spend vs Sellerboard PPC spend', inputs.campaignSpend, Math.abs(inputs.sellerboardPpcSpend)));
   }
   return checks;
 }
