@@ -14,7 +14,7 @@ import { decideTargetAction } from '../lib/engine/targetActions';
 import { decideCampaignRecommendation } from '../lib/engine/campaignRecommendation';
 import { decorateSearchTerms } from '../lib/engine/searchTerms';
 import { classifyProductStrategy } from '../lib/engine/strategy';
-import { runReconciliation, worstStatus } from '../lib/aggregate/reconciliation';
+import { runReconciliation, worstStatus, type ReconciliationInputs } from '../lib/aggregate/reconciliation';
 
 export interface Kpis {
   impressions: number;
@@ -30,7 +30,11 @@ export interface Kpis {
 export interface Workspace {
   currentPeriod: DateRange | null;
   alignment: AlignmentResult;
-  reconciliation: { checks: ReconciliationCheck[]; status: ReconciliationStatus };
+  // rawInputs: the exact five values actually supplied to runReconciliation()
+  // this render — surfaced for the temporary Dashboard diagnostics panel so
+  // the live runtime numbers can be inspected directly, instead of inferred
+  // from uploaded-file summaries. Not used by any reconciliation logic itself.
+  reconciliation: { checks: ReconciliationCheck[]; status: ReconciliationStatus; rawInputs: ReconciliationInputs };
   economics: ProductEconomics[];
   economicsById: Record<string, ProductEconomics>;
   strategies: ProductStrategyResult[];
@@ -131,13 +135,14 @@ export function buildWorkspace(
 
   // --- Reconciliation ---
   const sumSpend = (rows: { spend: number }[]) => (rows.length > 0 ? rows.reduce((a, r) => a + r.spend, 0) : null);
-  const checks = runReconciliation({
+  const reconciliationInputs: ReconciliationInputs = {
     campaignSpend: sumSpend(reportRows.campaign),
     targetingSpend: sumSpend(reportRows.targeting),
     searchTermSpend: sumSpend(reportRows.searchTerm),
     advertisedProductSpend: reportRows.advertisedProduct.length > 0 ? sumSpend(reportRows.advertisedProduct) : null,
     sellerboardPpcSpend: economics.length > 0 ? economics.reduce((a, e) => a + e.ppcSpend, 0) : null,
-  });
+  };
+  const checks = runReconciliation(reconciliationInputs);
 
   // --- Account net profit (period-scoped, never carried over) ---
   const accountNetProfitEntry = currentPeriod ? accountNetProfitByPeriod[periodKey(currentPeriod)] ?? null : null;
@@ -159,7 +164,7 @@ export function buildWorkspace(
   return {
     currentPeriod,
     alignment,
-    reconciliation: { checks, status: worstStatus(checks) },
+    reconciliation: { checks, status: worstStatus(checks), rawInputs: reconciliationInputs },
     economics,
     economicsById,
     strategies,
