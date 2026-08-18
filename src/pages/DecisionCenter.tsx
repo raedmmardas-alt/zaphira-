@@ -191,6 +191,7 @@ export function DecisionCenter() {
     ? forecastAllHorizons({
         observedDays, spend: forecastProduct.spend, clicks: forecastProduct.clicks, orders: forecastProduct.orders,
         sales: forecastProduct.sales, manualEconomics: manualResults[forecastProduct.productId] ?? null,
+        sellingPrice: products.find((p) => p.id === forecastProduct.productId)?.sellingPrice ?? null,
       })
     : null;
 
@@ -412,20 +413,25 @@ export function DecisionCenter() {
                       <div className="text-sm font-semibold text-navy-900">{HORIZON_LABEL[h]}</div>
                       <Badge tone={confidenceTone(f.confidence)}>{f.confidence}</Badge>
                     </div>
-                    <div className="mt-2 space-y-1 text-xs text-navy-600">
-                      <div>Spend <span className="float-right font-medium text-navy-900">{formatCurrency(f.spend.low)}–{formatCurrency(f.spend.high)}</span></div>
-                      <div>Clicks <span className="float-right font-medium text-navy-900">{formatNumber(f.clicks.low)}–{formatNumber(f.clicks.high)}</span></div>
-                      <div>Orders <span className="float-right font-medium text-navy-900">{formatNumber(f.orders.low)}–{formatNumber(f.orders.high)}</span></div>
-                      <div>Sales <span className="float-right font-medium text-navy-900">{formatCurrency(f.sales.low)}–{formatCurrency(f.sales.high)}</span></div>
-                      <div>CPA <span className="float-right font-medium text-navy-900">{f.cpa !== null ? formatCurrency(f.cpa) : '—'}</span></div>
-                      <div>ACoS <span className="float-right font-medium text-navy-900">{f.acos !== null ? formatPercent(f.acos) : '—'}</span></div>
-                      {f.estimatedProfit ? (
-                        <div>Est. Profit <span className={`float-right font-medium ${f.estimatedProfit.expected >= 0 ? 'text-positive-600' : 'text-negative-600'}`}>{formatCurrency(f.estimatedProfit.low)} to {formatCurrency(f.estimatedProfit.high)}</span></div>
-                      ) : (
-                        <div className="text-navy-400">Economics incomplete — no profit estimate</div>
-                      )}
-                    </div>
-                    <div className="mt-2 text-[11px] italic text-navy-400">{f.disclaimer}</div>
+                    {f.insufficientDelivery ? (
+                      <div className="mt-3 rounded-lg bg-wait-50 px-3 py-2 text-xs font-semibold text-wait-600">INSUFFICIENT DELIVERY</div>
+                    ) : (
+                      <div className="mt-2 space-y-1 text-xs text-navy-600">
+                        <div>Spend <span className="float-right font-medium text-navy-900">{formatCurrency(f.spend.low)}–{formatCurrency(f.spend.high)}</span></div>
+                        <div>Clicks <span className="float-right font-medium text-navy-900">{formatNumber(f.clicks.low)}–{formatNumber(f.clicks.high)}</span></div>
+                        <div>Orders <span className="float-right font-medium text-navy-900">{formatNumber(f.orders.low)}–{formatNumber(f.orders.high)}</span></div>
+                        <div>Sales <span className="float-right font-medium text-navy-900">{formatCurrency(f.sales.low)}–{formatCurrency(f.sales.high)}</span></div>
+                        <div>CPA <span className="float-right font-medium text-navy-900">{f.cpa !== null ? formatCurrency(f.cpa) : '—'}</span></div>
+                        <div>ACoS <span className="float-right font-medium text-navy-900">{f.acos !== null ? formatPercent(f.acos) : '—'}</span></div>
+                        {f.estimatedProfit ? (
+                          <div>Est. Profit <span className={`float-right font-medium ${f.estimatedProfit.expected >= 0 ? 'text-positive-600' : 'text-negative-600'}`}>{formatCurrency(f.estimatedProfit.low)} to {formatCurrency(f.estimatedProfit.high)}</span></div>
+                        ) : (
+                          <div className="text-navy-400">Economics incomplete — no profit estimate</div>
+                        )}
+                      </div>
+                    )}
+                    <div className="mt-2 text-[11px] text-navy-500">{f.assumption}</div>
+                    <div className="mt-1 text-[11px] italic text-navy-400">{f.disclaimer}</div>
                   </div>
                 );
               })}

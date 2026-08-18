@@ -513,6 +513,16 @@ export interface ForecastResult {
   estimatedProfit: ForecastRange | null; // null when product economics are incomplete
   isEstimate: true;
   disclaimer: string;
+  // True when there are 0 observed clicks — not enough delivery evidence to
+  // project spend/clicks/orders at all. When true, every ForecastRange
+  // above is zeroed and must be presented as "insufficient delivery", never
+  // as a meaningful $0 prediction.
+  insufficientDelivery: boolean;
+  // One short, human-readable line stating the main assumption this
+  // forecast rests on (e.g. the conversion-rate prior used, or the order
+  // value assumed) — always present, so the range is never read as more
+  // certain than it is.
+  assumption: string;
 }
 
 // ---------------------------------------------------------------------------
