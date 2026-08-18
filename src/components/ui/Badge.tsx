@@ -73,6 +73,19 @@ export function riskClassificationTone(classification: string): BadgeTone {
   }
 }
 
+// DashboardReconciliationStatus — the Dashboard "Data reconciliation"
+// badge's single authoritative status (see deriveDashboardReconciliationStatus).
+// INSUFFICIENT_DATA is a "not enough data yet" state, not a failure — it
+// gets the same tone as other wait-for-data states elsewhere in the app.
+export function dashboardReconciliationTone(status: string): BadgeTone {
+  switch (status) {
+    case 'DATA_RECONCILED': return 'positive';
+    case 'INSUFFICIENT_DATA': return 'wait';
+    case 'DATA_MISMATCH_REVIEW_REQUIRED': return 'negative';
+    default: return 'neutral';
+  }
+}
+
 // DecisionActionType — the expanded, non-technical action vocabulary.
 export function decisionActionTone(action: string): BadgeTone {
   switch (action) {

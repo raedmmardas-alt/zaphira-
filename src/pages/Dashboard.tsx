@@ -4,7 +4,7 @@ import { PageHeader } from '../components/ui/PageHeader';
 import { Card } from '../components/ui/Card';
 import { KpiCard } from '../components/ui/KpiCard';
 import { Table, Th, Td } from '../components/ui/Table';
-import { Badge, actionTone, riskTone } from '../components/ui/Badge';
+import { Badge, actionTone, dashboardReconciliationTone, riskTone } from '../components/ui/Badge';
 import { AlignmentBanner } from '../components/AlignmentBanner';
 import { ReportCoverage } from '../components/ReportCoverage';
 import { PpcPerformanceChart } from '../components/PpcPerformanceChart';
@@ -262,7 +262,7 @@ export function Dashboard() {
           {/* 7. PPC Health */}
           <Card title="PPC Health">
             <div className="space-y-2 text-sm">
-              <div className="flex items-center justify-between"><span className="text-navy-600">Data reconciliation</span><Badge tone={ws.reconciliation.status === 'DATA_RECONCILED' ? 'positive' : ws.reconciliation.status === 'SMALL_ATTRIBUTION_DIFFERENCE' ? 'watch' : 'negative'}>{ws.reconciliation.status.replace(/_/g, ' ')}</Badge></div>
+              <div className="flex items-center justify-between"><span className="text-navy-600">Data reconciliation</span><Badge tone={dashboardReconciliationTone(ws.reconciliation.status)}>{ws.reconciliation.status.replace(/_/g, ' ')}</Badge></div>
               <div className="flex items-center justify-between"><span className="text-navy-600">Current-period clicks</span><span className="font-medium text-navy-900">{formatNumber(ws.kpis.clicks)}</span></div>
               <div className="flex items-center justify-between"><span className="text-navy-600">Current-period targets</span><span className="font-medium text-navy-900">{currentTargets.length}</span></div>
               <div className="flex items-center justify-between"><span className="text-navy-600">No/Low delivery</span><span className="font-medium text-navy-900">{currentTargets.filter((t) => t.delivery === 'NO_DELIVERY' || t.delivery === 'LOW_DELIVERY').length}</span></div>
@@ -303,7 +303,7 @@ export function Dashboard() {
           </div>
           <div className="mb-3 flex items-center gap-2 text-sm">
             <span className="text-navy-600">Overall reconciliation status</span>
-            <Badge tone={ws.reconciliation.status === 'DATA_RECONCILED' ? 'positive' : ws.reconciliation.status === 'SMALL_ATTRIBUTION_DIFFERENCE' ? 'watch' : 'negative'}>{ws.reconciliation.status.replace(/_/g, ' ')}</Badge>
+            <Badge tone={dashboardReconciliationTone(ws.reconciliation.status)}>{ws.reconciliation.status.replace(/_/g, ' ')}</Badge>
           </div>
           <Table>
             <thead>

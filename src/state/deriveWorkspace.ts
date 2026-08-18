@@ -1,6 +1,6 @@
 import type {
   AccountNetProfitEntry, DateRange, EnrichedCampaign, EnrichedSearchTerm, EnrichedTarget, Product, ProductEconomics,
-  ProductStrategyResult, ReconciliationCheck, ReconciliationStatus, ReportImportMeta, ReportType, SavedAdGroupMapping, Settings,
+  ProductStrategyResult, ReconciliationCheck, ReportImportMeta, ReportType, SavedAdGroupMapping, Settings,
 } from '../types';
 import type { ReportRowsByType } from './store';
 import { aggregateSellerboardProducts } from '../lib/aggregate/sellerboard';
@@ -14,7 +14,10 @@ import { decideTargetAction } from '../lib/engine/targetActions';
 import { decideCampaignRecommendation } from '../lib/engine/campaignRecommendation';
 import { decorateSearchTerms } from '../lib/engine/searchTerms';
 import { classifyProductStrategy } from '../lib/engine/strategy';
-import { runReconciliation, worstStatus, type ReconciliationInputs } from '../lib/aggregate/reconciliation';
+import {
+  runReconciliation, deriveDashboardReconciliationStatus,
+  type ReconciliationInputs, type DashboardReconciliationStatus,
+} from '../lib/aggregate/reconciliation';
 
 export interface Kpis {
   impressions: number;
@@ -31,10 +34,14 @@ export interface Workspace {
   currentPeriod: DateRange | null;
   alignment: AlignmentResult;
   // rawInputs: the exact five values actually supplied to runReconciliation()
-  // this render — surfaced for the temporary Dashboard diagnostics panel so
-  // the live runtime numbers can be inspected directly, instead of inferred
-  // from uploaded-file summaries. Not used by any reconciliation logic itself.
-  reconciliation: { checks: ReconciliationCheck[]; status: ReconciliationStatus; rawInputs: ReconciliationInputs };
+  // this render — surfaced for the Dashboard diagnostics panel so the live
+  // runtime numbers can be inspected directly, instead of inferred from
+  // uploaded-file summaries. Not used by any reconciliation logic itself.
+  // status: the ONE authoritative source for the Dashboard "Data
+  // reconciliation" badge — see deriveDashboardReconciliationStatus for the
+  // exact, isolated rule. Never combined with report-quality/DEGRADED,
+  // period-alignment, mapping, or delivery status.
+  reconciliation: { checks: ReconciliationCheck[]; status: DashboardReconciliationStatus; rawInputs: ReconciliationInputs };
   economics: ProductEconomics[];
   economicsById: Record<string, ProductEconomics>;
   strategies: ProductStrategyResult[];
@@ -164,7 +171,7 @@ export function buildWorkspace(
   return {
     currentPeriod,
     alignment,
-    reconciliation: { checks, status: worstStatus(checks), rawInputs: reconciliationInputs },
+    reconciliation: { checks, status: deriveDashboardReconciliationStatus(checks, reconciliationInputs), rawInputs: reconciliationInputs },
     economics,
     economicsById,
     strategies,

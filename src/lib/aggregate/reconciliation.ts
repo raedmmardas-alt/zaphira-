@@ -57,3 +57,42 @@ export function worstStatus(checks: ReconciliationCheck[]): ReconciliationStatus
   if (checks.some((c) => c.status === 'SMALL_ATTRIBUTION_DIFFERENCE')) return 'SMALL_ATTRIBUTION_DIFFERENCE';
   return 'DATA_RECONCILED';
 }
+
+// The single, authoritative status for the Dashboard's "Data reconciliation"
+// badge — deliberately a distinct, narrower type from ReconciliationStatus
+// (which stays as the finer-grained per-check / worstStatus severity level,
+// unchanged, still used wherever that granularity matters). This function
+// touches NO tolerances, NO thresholds, and NO check math — check(),
+// statusFor(), runReconciliation(), and worstStatus() above are all
+// untouched. It only decides, from runReconciliation()'s own output plus
+// the raw inputs it was given, which of three states the badge shows:
+//
+//   INSUFFICIENT_DATA           — reconciliation cannot run at all because a
+//                                  required report (Campaign or Targeting —
+//                                  every other check is anchored to these
+//                                  two) hasn't been uploaded. Never silently
+//                                  read as "reconciled".
+//   DATA_MISMATCH_REVIEW_REQUIRED — at least one check genuinely exceeds the
+//                                  mismatch threshold.
+//   DATA_RECONCILED             — every check is within tolerance (a small
+//                                  attribution-level difference alone does
+//                                  not block this badge — that's a real,
+//                                  separate severity tier still visible on
+//                                  each individual check, just not treated
+//                                  as blocking for this single badge).
+//
+// This must NEVER be combined with report-quality (DEGRADED/OK), period-
+// alignment, mapping, or delivery status — those are entirely separate
+// systems and are not read by this function at all.
+export type DashboardReconciliationStatus = 'DATA_RECONCILED' | 'DATA_MISMATCH_REVIEW_REQUIRED' | 'INSUFFICIENT_DATA';
+
+export function deriveDashboardReconciliationStatus(
+  checks: ReconciliationCheck[],
+  inputs: ReconciliationInputs,
+): DashboardReconciliationStatus {
+  if (inputs.campaignSpend === null || inputs.targetingSpend === null) {
+    return 'INSUFFICIENT_DATA';
+  }
+  const hasMismatch = checks.some((check) => check.status === 'DATA_MISMATCH_REVIEW_REQUIRED');
+  return hasMismatch ? 'DATA_MISMATCH_REVIEW_REQUIRED' : 'DATA_RECONCILED';
+}

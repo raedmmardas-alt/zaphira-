@@ -2,13 +2,26 @@ import { describe, it, expect } from 'vitest';
 import { buildWorkspace } from './deriveWorkspace';
 import { DEFAULT_SETTINGS } from '../types';
 import { EMPTY_ROWS } from './store';
-import type { AccountNetProfitEntry, CampaignRow, ReportImportMeta } from '../types';
+import type {
+  AccountNetProfitEntry, AdvertisedProductRow, CampaignRow, ReportImportMeta, SearchTermRow, SellerboardProductRow, TargetingRow,
+} from '../types';
 
 function campaignMeta(period: { start: string; end: string }): ReportImportMeta {
   return {
     id: 'c1', type: 'campaign', filename: 'c.csv', fileSizeBytes: 1, rowCount: 1, importedAt: new Date().toISOString(),
     requestedPeriod: period, observedPeriod: period, periodConfirmedManually: true, status: 'OK',
     detectedColumns: [], missingRequiredFields: [], missingOptionalFields: [],
+  };
+}
+
+// Same shape as campaignMeta, but explicitly DEGRADED (some optional fields
+// missing) — used to prove report-quality status never leaks into the
+// reconciliation badge.
+function degradedMeta(type: ReportImportMeta['type'], period: { start: string; end: string }): ReportImportMeta {
+  return {
+    id: `${type}-degraded`, type, filename: `${type}.csv`, fileSizeBytes: 1, rowCount: 1, importedAt: new Date().toISOString(),
+    requestedPeriod: period, observedPeriod: period, periodConfirmedManually: true, status: 'DEGRADED',
+    detectedColumns: [], missingRequiredFields: [], missingOptionalFields: ['status', 'budget', 'startDate', 'endDate'],
   };
 }
 
@@ -90,5 +103,68 @@ describe('Business Overview traffic KPIs (Impressions/Clicks/CTR/Average CPC)', 
     const cpc = ws.kpis.ppcSpend / ws.kpis.clicks;
     expect(ctr).toBeCloseTo(0.0048, 3);
     expect(cpc).toBeCloseTo(1.17, 2);
+  });
+});
+
+describe('Dashboard reconciliation badge — single authoritative source, isolated from report quality', () => {
+  it('shows DATA_RECONCILED when the financial checks reconcile, even though every report is DEGRADED (missing optional fields)', () => {
+    const period = { start: '2026-08-14', end: '2026-08-17' };
+
+    const campaignRows: CampaignRow[] = [
+      { campaign: 'Coconut - Sponsored Products', impressions: 6131, clicks: 18, spend: 23.88, orders: 0, sales: 0, activityStart: period.start, activityEnd: period.end },
+    ];
+    const targetingRows: TargetingRow[] = [
+      { campaign: 'Coconut - Sponsored Products', adGroup: 'Coconut AG', targetingText: 'coconut oil moisturizer', matchType: 'BROAD', bid: null, impressions: 6131, clicks: 18, spend: 23.88, orders: 0, sales: 0, activityStart: period.start, activityEnd: period.end },
+    ];
+    const searchTermRows: SearchTermRow[] = [
+      { campaign: 'Coconut - Sponsored Products', adGroup: 'Coconut AG', searchTerm: 'coconut oil', targetingText: 'coconut oil moisturizer', matchType: 'BROAD', impressions: 5532, clicks: 18, spend: 23.88, orders: 0, sales: 0, activityStart: period.start, activityEnd: period.end },
+    ];
+    const advertisedProductRows: AdvertisedProductRow[] = [
+      { campaign: 'Coconut - Sponsored Products', adGroup: 'Coconut AG', asin: 'B0GZVGXXS2', impressions: 6131, clicks: 18, spend: 23.88, orders: 0, sales: 0, activityStart: period.start, activityEnd: period.end },
+    ];
+    // Sellerboard's raw, signed expense (-23.88) — untouched, exactly as the
+    // parser would produce it. Aggregation (unchanged by this fix) is what
+    // normalizes this to a comparable magnitude before reconciliation runs.
+    const sellerboardRows: SellerboardProductRow[] = [
+      { date: period.start, marketplace: 'US', asin: 'B0GZVGXXS2', sku: 'COCO-001', salesOrganic: 10, salesPpc: 0, salesSponsoredProducts: 0, promotions: 0, amazonFees: 5.09, cogs: 2.91, refundCost: 0, adSpend: -23.88, units: 0, orders: 0, netProfit: null },
+    ];
+
+    const ws = buildWorkspace(
+      {
+        campaign: degradedMeta('campaign', period),
+        targeting: degradedMeta('targeting', period),
+        searchTerm: degradedMeta('searchTerm', period),
+        advertisedProduct: degradedMeta('advertisedProduct', period),
+        sellerboardProduct: degradedMeta('sellerboardProduct', period),
+      },
+      { ...EMPTY_ROWS, campaign: campaignRows, targeting: targetingRows, searchTerm: searchTermRows, advertisedProduct: advertisedProductRows, sellerboardProduct: sellerboardRows },
+      [],
+      [],
+      DEFAULT_SETTINGS,
+      {},
+    );
+
+    // The financial/data reconciliation badge must read DATA_RECONCILED —
+    // report quality (DEGRADED, set on every report's own meta above) is a
+    // completely separate signal and must never demote this status. Its
+    // type (DashboardReconciliationStatus) cannot even represent 'DEGRADED'.
+    expect(ws.reconciliation.status).toBe('DATA_RECONCILED');
+    expect(ws.reconciliation.checks.every((c) => c.status !== 'DATA_MISMATCH_REVIEW_REQUIRED')).toBe(true);
+  });
+
+  it('shows INSUFFICIENT_DATA (never a falsely reassuring DATA_RECONCILED) when the Targeting report has not been uploaded at all', () => {
+    const period = { start: '2026-08-14', end: '2026-08-17' };
+    const campaignRows: CampaignRow[] = [
+      { campaign: 'Coconut - Sponsored Products', impressions: 6131, clicks: 18, spend: 23.88, orders: 0, sales: 0, activityStart: period.start, activityEnd: period.end },
+    ];
+    const ws = buildWorkspace(
+      { campaign: campaignMeta(period) },
+      { ...EMPTY_ROWS, campaign: campaignRows },
+      [],
+      [],
+      DEFAULT_SETTINGS,
+      {},
+    );
+    expect(ws.reconciliation.status).toBe('INSUFFICIENT_DATA');
   });
 });
