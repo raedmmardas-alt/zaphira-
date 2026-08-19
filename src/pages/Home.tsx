@@ -4,7 +4,8 @@ import { KpiCard } from '../components/ui/KpiCard';
 import { Badge } from '../components/ui/Badge';
 import { useDecisionActions } from '../state/useDecisionActions';
 import { useAppStore } from '../state/store';
-import { formatCurrency, formatMatchType, formatNumber, formatPercent } from '../lib/engine/metrics';
+import { useDisplayCurrency } from '../state/useDisplayCurrency';
+import { formatMatchType, formatNumber, formatPercent } from '../lib/engine/metrics';
 import { buildProductPerformanceRows } from '../lib/engine/ppcPerformanceSeries';
 import { SIMPLE_ACTION_LABEL, SIMPLE_RISK_LABEL, simpleActionTone } from '../lib/engine/simplifiedAction';
 import { deriveBudgetGuidance, deriveOverallStatus, deriveProductOverviewStatus, overallStatusLabel, overallStatusTone, productOverviewStatusTone } from '../lib/engine/homeRollups';
@@ -15,6 +16,7 @@ export function Home() {
   const { ws, campaignDecisions, rankedActions, nextDollar } = useDecisionActions();
   const products = useAppStore((s) => s.products);
   const settings = useAppStore((s) => s.settings);
+  const { formatAmount: fmt } = useDisplayCurrency();
 
   const overallStatus = deriveOverallStatus(ws.reconciliation.status, rankedActions);
   const budget = deriveBudgetGuidance(campaignDecisions, nextDollar, settings.maxDailyPpcBudget);
@@ -47,12 +49,12 @@ export function Home() {
         <GlobalContextBar />
         {/* KPIs */}
         <div className="grid grid-cols-2 gap-4 md:grid-cols-3 lg:grid-cols-6">
-          <KpiCard label="Sales" value={formatCurrency(ws.kpis.attributedSales)} />
-          <KpiCard label="PPC Spend" value={formatCurrency(ws.kpis.ppcSpend)} />
+          <KpiCard label="Sales" value={fmt(ws.kpis.attributedSales)} />
+          <KpiCard label="PPC Spend" value={fmt(ws.kpis.ppcSpend)} />
           <KpiCard label="Orders" value={formatNumber(ws.kpis.orders)} />
           <KpiCard
             label="Profit"
-            value={ws.kpis.productProfit !== null ? formatCurrency(ws.kpis.productProfit) : '—'}
+            value={ws.kpis.productProfit !== null ? fmt(ws.kpis.productProfit) : '—'}
             tone={ws.kpis.productProfit !== null ? (ws.kpis.productProfit >= 0 ? 'positive' : 'negative') : 'neutral'}
           />
           <KpiCard
@@ -84,7 +86,7 @@ export function Home() {
                   </div>
                   {(a.recommendedBid !== null || a.recommendedBudget !== null) && (
                     <div className="mt-2 rounded-lg bg-navy-900/[0.04] px-2.5 py-1.5 text-sm font-medium text-navy-900">
-                      {a.recommendedBid !== null ? `${formatCurrency(a.currentBid)} → ${formatCurrency(a.recommendedBid)}` : `${formatCurrency(a.currentBudget)} → ${formatCurrency(a.recommendedBudget)}`}
+                      {a.recommendedBid !== null ? `${fmt(a.currentBid)} → ${fmt(a.recommendedBid)}` : `${fmt(a.currentBudget)} → ${fmt(a.recommendedBudget)}`}
                     </div>
                   )}
                   <p className="mt-2 text-xs text-navy-600">{a.reason}</p>
@@ -102,11 +104,11 @@ export function Home() {
           <div className="flex flex-wrap items-end gap-8">
             <div>
               <div className="text-xs font-medium uppercase tracking-wide text-navy-500">Today</div>
-              <div className="mt-1 text-3xl font-semibold tabular-nums text-navy-900">{formatCurrency(budget.today)}<span className="text-sm font-normal text-navy-400">/day</span></div>
+              <div className="mt-1 text-3xl font-semibold tabular-nums text-navy-900">{fmt(budget.today)}<span className="text-sm font-normal text-navy-400">/day</span></div>
             </div>
             <div>
               <div className="text-xs font-medium uppercase tracking-wide text-navy-500">Current</div>
-              <div className="mt-1 text-xl font-semibold tabular-nums text-navy-600">{formatCurrency(budget.current)}<span className="text-sm font-normal text-navy-400">/day</span></div>
+              <div className="mt-1 text-xl font-semibold tabular-nums text-navy-600">{fmt(budget.current)}<span className="text-sm font-normal text-navy-400">/day</span></div>
             </div>
             <Badge tone={budget.recommendation === 'Increase' ? 'positive' : budget.recommendation === 'Reduce' ? 'watch' : 'brand'}>{budget.recommendation.toUpperCase()}</Badge>
           </div>
@@ -130,9 +132,9 @@ export function Home() {
                     <Badge tone={productOverviewStatusTone(status)}>{status}</Badge>
                   </div>
                   <div className="mt-3 space-y-1 text-xs text-navy-600">
-                    <div className="flex justify-between"><span>Spend</span><span className="font-medium text-navy-900">{formatCurrency(r.spend)}</span></div>
+                    <div className="flex justify-between"><span>Spend</span><span className="font-medium text-navy-900">{fmt(r.spend)}</span></div>
                     <div className="flex justify-between"><span>Orders</span><span className="font-medium text-navy-900">{formatNumber(r.orders)}</span></div>
-                    <div className="flex justify-between"><span>Sales</span><span className="font-medium text-navy-900">{formatCurrency(r.sales)}</span></div>
+                    <div className="flex justify-between"><span>Sales</span><span className="font-medium text-navy-900">{fmt(r.sales)}</span></div>
                     <div className="flex justify-between"><span>ACoS</span><span className="font-medium text-navy-900">{r.acos !== null ? formatPercent(r.acos) : <span className="text-navy-400">{r.spend > 0 ? 'No ad sales' : '—'}</span>}</span></div>
                   </div>
                 </Link>

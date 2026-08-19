@@ -6,7 +6,8 @@ import { Table, Th, Td } from '../components/ui/Table';
 import { Badge } from '../components/ui/Badge';
 import { useDecisionActions } from '../state/useDecisionActions';
 import { useAppStore } from '../state/store';
-import { formatCurrency, formatMatchType, formatPercent } from '../lib/engine/metrics';
+import { useDisplayCurrency } from '../state/useDisplayCurrency';
+import { formatMatchType, formatPercent } from '../lib/engine/metrics';
 import { DELIVERY_LABEL } from '../lib/engine/delivery';
 import { SIMPLE_ACTION_LABEL, SIMPLE_RISK_LABEL, simpleActionTone, simpleRiskTone, type SimpleAction } from '../lib/engine/simplifiedAction';
 import { computeDataFreshness, formatPeriodEndDate } from '../lib/engine/dataFreshness';
@@ -22,14 +23,15 @@ const ACTION_FILTERS: { value: SimpleAction | 'all'; label: string }[] = [
   { value: 'TEST', label: 'Test' },
 ];
 
-function bidCell(a: DecisionAction): string {
+function bidCell(a: DecisionAction, fmt: (v: number | null) => string): string {
   if (a.currentBid === null && a.recommendedBid === null) return '—';
-  return `${formatCurrency(a.currentBid)} → ${formatCurrency(a.recommendedBid)}`;
+  return `${fmt(a.currentBid)} → ${fmt(a.recommendedBid)}`;
 }
 
 export function Optimize() {
   const { ws, targetDecisions } = useDecisionActions();
   const products = useAppStore((s) => s.products);
+  const { formatAmount: fmt } = useDisplayCurrency();
   const [searchParams, setSearchParams] = useSearchParams();
   const productFilter = searchParams.get('product') ?? 'all';
   const [actionFilter, setActionFilter] = useState<SimpleAction | 'all'>('all');
@@ -105,8 +107,8 @@ export function Optimize() {
                     <Td className="font-medium text-navy-900">{a.productName ?? <span className="text-negative-600">Unmapped</span>}</Td>
                     <Td className="max-w-[220px] truncate font-medium text-navy-900">{a.targetingText}</Td>
                     <Td className="text-xs">{formatMatchType(a.matchType)}</Td>
-                    <Td>{a.currentBid !== null ? formatCurrency(a.currentBid) : '—'}</Td>
-                    <Td className="font-medium text-navy-900">{bidCell(a)}</Td>
+                    <Td>{a.currentBid !== null ? fmt(a.currentBid) : '—'}</Td>
+                    <Td className="font-medium text-navy-900">{bidCell(a, fmt)}</Td>
                     <Td className="max-w-[280px] truncate text-xs text-navy-600" title={a.reason}>{a.reason}</Td>
                     <Td><Badge tone={simpleRiskTone(a.risk.classification)}>{SIMPLE_RISK_LABEL[a.risk.classification]}</Badge></Td>
                     <Td>
@@ -127,11 +129,11 @@ export function Optimize() {
                           <div>Conversion evidence <span className="float-right font-medium text-navy-900">{a.conversionEvidence}</span></div>
                           <div>Traffic / delivery <span className="float-right font-medium text-navy-900">{DELIVERY_LABEL[a.delivery]}</span></div>
                           <div>Confidence <span className="float-right font-medium text-navy-900">{a.confidence}</span></div>
-                          <div>Remaining to CPA review <span className="float-right font-medium text-navy-900">{a.remainingToTargetCpaReview !== null ? formatCurrency(a.remainingToTargetCpaReview) : '—'}</span></div>
-                          <div>Remaining to break-even <span className="float-right font-medium text-navy-900">{a.remainingToBreakEvenStop !== null ? formatCurrency(a.remainingToBreakEvenStop) : '—'}</span></div>
+                          <div>Remaining to CPA review <span className="float-right font-medium text-navy-900">{a.remainingToTargetCpaReview !== null ? fmt(a.remainingToTargetCpaReview) : '—'}</span></div>
+                          <div>Remaining to break-even <span className="float-right font-medium text-navy-900">{a.remainingToBreakEvenStop !== null ? fmt(a.remainingToBreakEvenStop) : '—'}</span></div>
                           <div>Current ACoS <span className="float-right font-medium text-navy-900">{formatPercent(a.currentPerformance.acos)}</span></div>
                           {a.estimatedImpact !== 0 && (
-                            <div>Estimated impact <span className={`float-right font-medium ${a.estimatedImpact >= 0 ? 'text-positive-600' : 'text-negative-600'}`}>{formatCurrency(a.estimatedImpact)}</span></div>
+                            <div>Estimated impact <span className={`float-right font-medium ${a.estimatedImpact >= 0 ? 'text-positive-600' : 'text-negative-600'}`}>{fmt(a.estimatedImpact)}</span></div>
                           )}
                         </div>
                       </Td>

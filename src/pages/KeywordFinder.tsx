@@ -8,6 +8,7 @@ import type { BadgeTone } from '../components/ui/Badge';
 import { CheckIcon, UploadIcon } from '../components/ui/Icons';
 import { useAppStore } from '../state/store';
 import { useWorkspace } from '../state/useWorkspace';
+import { useDisplayCurrency } from '../state/useDisplayCurrency';
 import { formatCurrency, formatNumber } from '../lib/engine/metrics';
 import { aggregateHeliumKeywords } from '../lib/aggregate/heliumKeywords';
 import {
@@ -88,6 +89,7 @@ export function KeywordFinder() {
   const settings = useAppStore((s) => s.settings);
   const productManualEconomics = useAppStore((s) => s.productManualEconomics);
   const ws = useWorkspace();
+  const { formatAmount: fmt } = useDisplayCurrency();
 
   async function onFile(e: ChangeEvent<HTMLInputElement>) {
     const file = e.target.files?.[0];
@@ -244,7 +246,7 @@ export function KeywordFinder() {
           <input ref={inputRef} type="file" accept=".csv,.xlsx,.xls" className="hidden" onChange={onFile} />
         </Card>
 
-        <Card title="Recommended Campaign" subtitle={`A ranked shortlist of buildable keywords (LAUNCH/TEST, definite product, calculated safe bid) that fits inside your ${formatCurrency(maxDailyPpcBudget)}/day account PPC budget. An estimated planning maximum, not guaranteed spend.`}>
+        <Card title="Recommended Campaign" subtitle={`A ranked shortlist of buildable keywords (LAUNCH/TEST, definite product, calculated safe bid) that fits inside your ${fmt(maxDailyPpcBudget)}/day account PPC budget. An estimated planning maximum, not guaranteed spend.`}>
           <div className="grid grid-cols-1 gap-4 sm:grid-cols-3">
             <div className="rounded-xl border border-border-subtle p-4">
               <div className="text-xs font-medium uppercase tracking-wide text-navy-500">Keywords</div>
@@ -252,16 +254,16 @@ export function KeywordFinder() {
             </div>
             <div className="rounded-xl border border-border-subtle p-4">
               <div className="text-xs font-medium uppercase tracking-wide text-navy-500">Recommended Daily Budget</div>
-              <div className={`mt-1 text-2xl font-semibold ${summary.keywordCount > 0 ? 'text-navy-900' : 'text-navy-300'}`}>{summary.keywordCount > 0 ? formatCurrency(summary.recommendedDailyBudget) : '—'}</div>
+              <div className={`mt-1 text-2xl font-semibold ${summary.keywordCount > 0 ? 'text-navy-900' : 'text-navy-300'}`}>{summary.keywordCount > 0 ? fmt(summary.recommendedDailyBudget) : '—'}</div>
             </div>
             <div className="rounded-xl border border-border-subtle p-4">
               <div className="text-xs font-medium uppercase tracking-wide text-navy-500">Estimated Monthly Budget</div>
-              <div className={`mt-1 text-2xl font-semibold ${summary.keywordCount > 0 ? 'text-navy-900' : 'text-navy-300'}`}>{summary.keywordCount > 0 ? formatCurrency(summary.estimatedMonthlyBudget) : '—'}</div>
+              <div className={`mt-1 text-2xl font-semibold ${summary.keywordCount > 0 ? 'text-navy-900' : 'text-navy-300'}`}>{summary.keywordCount > 0 ? fmt(summary.estimatedMonthlyBudget) : '—'}</div>
             </div>
           </div>
           {summary.additionalBuildableKeywordsAvailable > 0 && (
             <p className="mt-3 text-xs text-navy-500">
-              {summary.additionalBuildableKeywordsAvailable} more buildable keyword{summary.additionalBuildableKeywordsAvailable === 1 ? '' : 's'} available if your daily PPC budget is increased above {formatCurrency(maxDailyPpcBudget)}.
+              {summary.additionalBuildableKeywordsAvailable} more buildable keyword{summary.additionalBuildableKeywordsAvailable === 1 ? '' : 's'} available if your daily PPC budget is increased above {fmt(maxDailyPpcBudget)}.
             </p>
           )}
         </Card>
@@ -291,15 +293,15 @@ export function KeywordFinder() {
                     <Td className="text-xs">{r.recommendedMatchType}</Td>
                     <Td>
                       {r.recommendedBid !== null
-                        ? formatCurrency(r.recommendedBid)
+                        ? fmt(r.recommendedBid)
                         : <span className="text-xs text-navy-400" title={r.bidUnavailableReason ?? undefined}>{compactBidReason(r)}</span>}
                     </Td>
                     <Td>
                       {r.maxSafeBid !== null
-                        ? formatCurrency(r.maxSafeBid)
+                        ? fmt(r.maxSafeBid)
                         : <span className="text-xs text-navy-400" title={r.bidUnavailableReason ?? undefined}>{compactBidReason(r)}</span>}
                     </Td>
-                    <Td>{r.recommendedDailyBudget !== null ? formatCurrency(r.recommendedDailyBudget) : '—'}</Td>
+                    <Td>{r.recommendedDailyBudget !== null ? fmt(r.recommendedDailyBudget) : '—'}</Td>
                     <Td>
                       <Badge tone={ACTION_TONE[r.action]}>{r.action}</Badge>
                       {selectedKeywordSet.has(r.normalizedKeyword) && <div className="mt-0.5 text-[10px] font-medium text-brand-700">✓ In Campaign</div>}
@@ -352,10 +354,16 @@ export function KeywordFinder() {
           </div>
         </Card>
 
+        {/* Deliberately NOT run through the Display Currency converter: this
+            is a build sheet meant for direct manual entry into Seller
+            Central, so every bid/budget number here must always match the
+            account's real report currency — converting it for display
+            would risk a seller typing a wrong-currency number straight
+            into a live Amazon bid field. */}
         {blueprint.length > 0 && (
           <Card
             title="Campaign Blueprint"
-            subtitle={`A build sheet to follow manually in Seller Central. Only the selected shortlist above — the keywords that fit inside your ${formatCurrency(maxDailyPpcBudget)}/day account PPC budget — appears here. Zaphira never publishes anything to Amazon automatically.`}
+            subtitle={`A build sheet to follow manually in Seller Central. Only the selected shortlist above — the keywords that fit inside your ${formatCurrency(maxDailyPpcBudget)}/day account PPC budget — appears here. Values are always shown in your account's report currency (${settings.currency}), never the display currency, since these are meant for direct entry into Amazon. Zaphira never publishes anything to Amazon automatically.`}
             actions={<button onClick={exportBlueprintCsv} className="rounded-lg border border-border-subtle px-3 py-1.5 text-xs font-medium text-navy-700 hover:bg-navy-900/5">Download Blueprint CSV</button>}
           >
             <Table>

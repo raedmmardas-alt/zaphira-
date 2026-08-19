@@ -655,6 +655,13 @@ export const SUPPORTED_MARKETPLACES: MarketplaceOption[] = [
   { country: 'US', label: 'United States', currency: 'USD' },
 ];
 
+// Display Currency is a separate, independent setting from the marketplace's
+// report currency (Settings.currency) — a presentation-only conversion
+// layer for monetary values. It never changes what currency the underlying
+// Amazon/Sellerboard data was reported in.
+export const BASE_REPORT_CURRENCY = 'USD';
+export const SUPPORTED_DISPLAY_CURRENCIES = ['USD', 'AED', 'EUR', 'CAD', 'MXN'];
+
 export type StrategyPosture = 'MAINTENANCE' | 'GROWTH' | 'AGGRESSIVE_GROWTH';
 
 export interface DeliveryThresholds {
@@ -672,11 +679,24 @@ export interface Settings {
   deliveryThresholds: DeliveryThresholds;
   stopLossClicks: number;
   stopLossSpend: number;
-  // Reserved for future multi-marketplace/multi-currency support. Only a
-  // single option each is offered today (US / USD) — no conversion or
-  // marketplace-specific logic exists yet.
+  // Reserved for future multi-marketplace support. Only a single option is
+  // offered today (US) — no marketplace-specific data isolation exists yet.
   country: string;
+  // The currency the underlying report data is actually denominated in —
+  // follows the selected marketplace (SUPPORTED_MARKETPLACES), never user-
+  // editable independently. All PPC calculations always run in this
+  // currency; it is never converted.
   currency: string;
+  // The currency monetary values are DISPLAYED in — independent of
+  // `currency` above. Defaults to the report currency (no conversion).
+  // Presentation-layer only: never fed back into any calculation.
+  displayCurrency: string;
+  // Locally-entered exchange rates, never fetched from a live API. Key is
+  // an ISO currency code from SUPPORTED_DISPLAY_CURRENCIES; value is how
+  // many units of that currency equal 1 unit of BASE_REPORT_CURRENCY
+  // (USD). Absent entries mean "no rate set yet" — display must show a
+  // clear "set exchange rate" prompt rather than fabricate a number.
+  exchangeRates: Record<string, number>;
 }
 
 export const DEFAULT_SETTINGS: Settings = {
@@ -694,6 +714,8 @@ export const DEFAULT_SETTINGS: Settings = {
   stopLossSpend: 25,
   country: 'US',
   currency: 'USD',
+  displayCurrency: 'USD',
+  exchangeRates: {},
 };
 
 export const DEFAULT_PRODUCTS: Product[] = [
