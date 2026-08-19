@@ -40,6 +40,12 @@ describe('adSpend alias resolution — real Sellerboard "Sponsored products (PPC
     }
   });
 
+  it('resolves the older Sellerboard "SponsoredProducts" (no spaces) and "Sponsored Products" (no PPC suffix) column variants to adSpend', () => {
+    for (const alias of ['SponsoredProducts', 'sponsoredproducts', 'SPONSOREDPRODUCTS', 'Sponsored Products', 'sponsored products', '  Sponsored   Products  ']) {
+      expect(resolveCanonicalField(alias)).toBe('adSpend');
+    }
+  });
+
   it('never maps the bare "Ads" column to adSpend — that total spans every ad type (Sponsored Products, Display, Brands, Brands Video), not just Sponsored Products PPC', () => {
     expect(resolveCanonicalField('Ads')).toBeNull();
   });

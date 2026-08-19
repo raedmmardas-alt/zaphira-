@@ -150,4 +150,38 @@ describe('Sellerboard Product report "Sponsored products (PPC)" column (real-exp
     // would be -99.99, not the Sponsored-Products-only figure.
     expect(rows[0].adSpend).toBe(-18.25);
   });
+
+  it('parses the exact "Product/ASIN/SKU/Ads/Sponsored products (PPC)/..." header/value set for Rose, Coconut, Mango, Vanilla and totals -23.88', () => {
+    const raw: RawParsedFile = {
+      headers: ['Product', 'ASIN', 'SKU', 'Ads', 'Sponsored products (PPC)', 'Sponsored Display', 'Sponsored brands (HSA)', 'Sponsored Brands Video'],
+      rows: [
+        { Product: 'Rose', ASIN: 'B0GZVBBRZP', SKU: 'ROSE-001', Ads: '-2.42', 'Sponsored products (PPC)': '-2.42', 'Sponsored Display': '0', 'Sponsored brands (HSA)': '0', 'Sponsored Brands Video': '0' },
+        { Product: 'Coconut', ASIN: 'B0GZVGXXS2', SKU: 'COCO-001', Ads: '-18.25', 'Sponsored products (PPC)': '-18.25', 'Sponsored Display': '0', 'Sponsored brands (HSA)': '0', 'Sponsored Brands Video': '0' },
+        { Product: 'Mango', ASIN: 'B0GZVP9HRB', SKU: 'MANGO-001', Ads: '0', 'Sponsored products (PPC)': '0', 'Sponsored Display': '0', 'Sponsored brands (HSA)': '0', 'Sponsored Brands Video': '0' },
+        { Product: 'Vanilla', ASIN: 'B0H28WG6BB', SKU: 'VAN-001', Ads: '-3.21', 'Sponsored products (PPC)': '-3.21', 'Sponsored Display': '0', 'Sponsored brands (HSA)': '0', 'Sponsored Brands Video': '0' },
+      ],
+    };
+    const { meta, rows } = importSellerboardProductReport(realFile, raw);
+
+    expect(meta.missingOptionalFields).not.toContain('adSpend');
+    const total = rows.reduce((a, r) => a + r.adSpend, 0);
+    expect(total).toBeCloseTo(-23.88);
+  });
+
+  it('also recognizes the older "SponsoredProducts" (no spaces, no PPC suffix) column name used by some Sellerboard export versions', () => {
+    const raw: RawParsedFile = {
+      headers: ['Marketplace', 'ASIN', 'SKU', 'Ads', 'SponsoredProducts', 'Sponsored Display'],
+      rows: [
+        { Marketplace: 'US', ASIN: 'B0GZVBBRZP', SKU: 'ROSE-001', Ads: '-2.42', SponsoredProducts: '-2.42', 'Sponsored Display': '0' },
+        { Marketplace: 'US', ASIN: 'B0GZVGXXS2', SKU: 'COCO-001', Ads: '-18.25', SponsoredProducts: '-18.25', 'Sponsored Display': '0' },
+        { Marketplace: 'US', ASIN: 'B0GZVP9HRB', SKU: 'MANGO-001', Ads: '0', SponsoredProducts: '0', 'Sponsored Display': '0' },
+        { Marketplace: 'US', ASIN: 'B0H28WG6BB', SKU: 'VAN-001', Ads: '-3.21', SponsoredProducts: '-3.21', 'Sponsored Display': '0' },
+      ],
+    };
+    const { meta, rows } = importSellerboardProductReport(realFile, raw);
+
+    expect(meta.missingOptionalFields).not.toContain('adSpend');
+    const total = rows.reduce((a, r) => a + r.adSpend, 0);
+    expect(total).toBeCloseTo(-23.88);
+  });
 });

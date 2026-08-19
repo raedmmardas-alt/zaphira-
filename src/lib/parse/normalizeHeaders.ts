@@ -60,17 +60,28 @@ export const FIELD_ALIASES: Record<string, string[]> = {
   amazonFees: ['amazon fees', 'fees', 'referral fee', 'fba fee'],
   cogs: ['cogs', 'cost of goods', 'cost of goods sold'],
   refundCost: ['refund cost', 'refunds', 'refund'],
-  // "Sponsored products (PPC)" is the real current Sellerboard Product
-  // Profitability export's Sponsored Products ad-spend column (verified
-  // against a real export). It is deliberately preferred/exact here rather
-  // than mapping the bare "Ads" column some Sellerboard exports also
-  // include — "Ads" is a total across every ad type (Sponsored Products,
-  // Sponsored Display, Sponsored Brands, Sponsored Brands Video), and this
-  // app's Amazon Campaign report is Sponsored-Products-only, so summing in
-  // "Ads" would inflate ppcSpend past what Amazon's own spend reports show
-  // and break reconciliation the other way. "Ads" is intentionally NOT
-  // aliased to anything.
-  adSpend: ['ads spend', 'ad spend', 'advertising cost', 'advertising spend', 'sponsored products ppc'],
+  // "Sponsored products (PPC)" (and the older "SponsoredProducts" /
+  // "Sponsored Products" export variants) is the real Sellerboard Product
+  // Profitability export's dedicated Sponsored Products ad-spend column
+  // (verified against a real export). It is deliberately preferred/exact
+  // here rather than mapping the bare "Ads" column some Sellerboard
+  // exports also include — "Ads" is a total across every ad type
+  // (Sponsored Products, Sponsored Display, Sponsored Brands, Sponsored
+  // Brands Video), and this app's Amazon Campaign report is
+  // Sponsored-Products-only, so summing in "Ads" would inflate ppcSpend
+  // past what Amazon's own spend reports show and break reconciliation the
+  // other way. "Ads" is intentionally NOT aliased to anything.
+  //
+  // "Ads spend" / "Ad spend" / "Advertising cost" / "Advertising spend"
+  // remain as a fallback tier only: these are alternate/older Sellerboard
+  // export naming and are not expected to coexist in the same file as a
+  // dedicated Sponsored Products column, so simple header-order matching
+  // (see buildHeaderMap) is sufficient to prefer whichever one the file
+  // actually has.
+  adSpend: [
+    'ads spend', 'ad spend', 'advertising cost', 'advertising spend',
+    'sponsored products ppc', 'sponsoredproducts', 'sponsored products',
+  ],
   units: ['units', 'units sold'],
   acos: ['acos'],
   // Sellerboard's own already-signed final Net Profit total. When present,

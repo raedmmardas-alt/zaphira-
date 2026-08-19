@@ -288,43 +288,6 @@ export function Dashboard() {
           </Card>
         </div>
 
-        {/* TEMPORARY DIAGNOSTIC — remove once the live reconciliation-status
-            discrepancy under investigation is root-caused. Read-only; does
-            not touch reconciliation logic, thresholds, parsing, or period
-            handling. Surfaces the exact live values runReconciliation() was
-            actually called with, and every check it returned this render. */}
-        <Card title="Reconciliation Diagnostics (Temporary)" subtitle="Live values from the current useWorkspace() state — remove after root-causing the reconciliation status.">
-          <div className="mb-4 grid grid-cols-2 gap-x-4 gap-y-1 text-xs text-navy-600 md:grid-cols-5">
-            <div>Campaign spend <span className="float-right font-medium text-navy-900">{ws.reconciliation.rawInputs.campaignSpend === null ? '—' : formatCurrency(ws.reconciliation.rawInputs.campaignSpend)}</span></div>
-            <div>Targeting spend <span className="float-right font-medium text-navy-900">{ws.reconciliation.rawInputs.targetingSpend === null ? '—' : formatCurrency(ws.reconciliation.rawInputs.targetingSpend)}</span></div>
-            <div>Search Term spend <span className="float-right font-medium text-navy-900">{ws.reconciliation.rawInputs.searchTermSpend === null ? '—' : formatCurrency(ws.reconciliation.rawInputs.searchTermSpend)}</span></div>
-            <div>Advertised Product spend <span className="float-right font-medium text-navy-900">{ws.reconciliation.rawInputs.advertisedProductSpend === null ? '—' : formatCurrency(ws.reconciliation.rawInputs.advertisedProductSpend)}</span></div>
-            <div>Sellerboard PPC spend (raw, as supplied) <span className="float-right font-medium text-navy-900">{ws.reconciliation.rawInputs.sellerboardPpcSpend === null ? '—' : formatCurrency(ws.reconciliation.rawInputs.sellerboardPpcSpend)}</span></div>
-          </div>
-          <div className="mb-3 flex items-center gap-2 text-sm">
-            <span className="text-navy-600">Overall reconciliation status</span>
-            <Badge tone={dashboardReconciliationTone(ws.reconciliation.status)}>{ws.reconciliation.status.replace(/_/g, ' ')}</Badge>
-          </div>
-          <Table>
-            <thead>
-              <tr><Th>Check</Th><Th>a</Th><Th>b</Th><Th>diffPct</Th><Th>Status</Th></tr>
-            </thead>
-            <tbody>
-              {ws.reconciliation.checks.map((c) => (
-                <tr key={c.label}>
-                  <Td className="font-medium text-navy-900">{c.label}</Td>
-                  <Td>{c.a === null ? '—' : c.a}</Td>
-                  <Td>{c.b === null ? '—' : c.b}</Td>
-                  <Td>{c.diffPct === null ? '—' : `${(c.diffPct * 100).toFixed(4)}%`}</Td>
-                  <Td>
-                    <Badge tone={c.status === 'DATA_RECONCILED' ? 'positive' : c.status === 'SMALL_ATTRIBUTION_DIFFERENCE' ? 'watch' : 'negative'}>{c.status.replace(/_/g, ' ')}</Badge>
-                  </Td>
-                </tr>
-              ))}
-            </tbody>
-          </Table>
-        </Card>
-
         {/* 9. Data Status */}
         <ReportCoverage />
       </div>

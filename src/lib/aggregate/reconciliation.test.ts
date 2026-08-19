@@ -160,4 +160,17 @@ describe('End-to-end: real raw report headers -> parser -> aggregation -> reconc
     const checks = runReconciliation(inputs);
     expect(deriveDashboardReconciliationStatus(checks, inputs)).toBe('DATA_RECONCILED');
   });
+
+  it('reconciles Amazon Campaign/Targeting/Search Term/Advertised Product all at 23.88 against Sellerboard raw PPC -23.88 as DATA_RECONCILED', () => {
+    const inputs: ReconciliationInputs = {
+      campaignSpend: 23.88,
+      targetingSpend: 23.88,
+      searchTermSpend: 23.88,
+      advertisedProductSpend: 23.88,
+      sellerboardPpcSpend: Math.abs(-23.88),
+    };
+    const checks = runReconciliation(inputs);
+    expect(checks.every((c) => c.status === 'DATA_RECONCILED')).toBe(true);
+    expect(deriveDashboardReconciliationStatus(checks, inputs)).toBe('DATA_RECONCILED');
+  });
 });
