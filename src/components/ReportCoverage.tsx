@@ -5,7 +5,7 @@ import { useAppStore } from '../state/store';
 import { Card } from './ui/Card';
 import { Badge } from './ui/Badge';
 
-const REPORT_LABELS: Record<ReportType, { title: string; description: string; required: boolean }> = {
+export const REPORT_LABELS: Record<ReportType, { title: string; description: string; required: boolean }> = {
   campaign: { title: 'Amazon Campaign Report', description: 'Campaign-level performance export', required: true },
   targeting: { title: 'Amazon Targeting Report', description: 'Keyword/target-level performance export', required: true },
   searchTerm: { title: 'Amazon Search Term Report', description: 'Customer search term performance export', required: false },
