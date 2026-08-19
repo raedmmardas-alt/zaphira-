@@ -26,3 +26,26 @@ describe('matchType alias resolution', () => {
     }
   });
 });
+
+describe('adSpend alias resolution — real Sellerboard "Sponsored products (PPC)" column', () => {
+  it('resolves "Sponsored products (PPC)" to the canonical "adSpend" field, case-insensitively and whitespace-tolerantly', () => {
+    for (const alias of ['Sponsored products (PPC)', 'sponsored products (ppc)', 'SPONSORED PRODUCTS (PPC)', '  Sponsored   products (PPC)  ', 'Sponsored products ( PPC )']) {
+      expect(resolveCanonicalField(alias)).toBe('adSpend');
+    }
+  });
+
+  it('still resolves the pre-existing adSpend aliases (no regression)', () => {
+    for (const alias of ['Ads spend', 'Ad spend', 'Advertising cost', 'Advertising spend']) {
+      expect(resolveCanonicalField(alias)).toBe('adSpend');
+    }
+  });
+
+  it('never maps the bare "Ads" column to adSpend — that total spans every ad type (Sponsored Products, Display, Brands, Brands Video), not just Sponsored Products PPC', () => {
+    expect(resolveCanonicalField('Ads')).toBeNull();
+  });
+
+  it('builds a header map that prefers "Sponsored products (PPC)" and never lets the unrelated "Sponsored Display" / "Sponsored brands (HSA)" / "Sponsored Brands Video" columns resolve to adSpend', () => {
+    const map = buildHeaderMap(['Ads', 'Sponsored products (PPC)', 'Sponsored Display', 'Sponsored brands (HSA)', 'Sponsored Brands Video']);
+    expect(map.adSpend).toBe('Sponsored products (PPC)');
+  });
+});

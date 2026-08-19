@@ -1,5 +1,7 @@
 import { describe, it, expect } from 'vitest';
-import { importAdvertisedProductReport, importCampaignReport, importSearchTermReport, importTargetingReport } from './reportImporters';
+import {
+  importAdvertisedProductReport, importCampaignReport, importSearchTermReport, importSellerboardProductReport, importTargetingReport,
+} from './reportImporters';
 import type { RawParsedFile } from './fileParser';
 
 const FILE = { name: 'campaign_report.csv', size: 1234 };
@@ -89,5 +91,63 @@ describe('Targeting report matchType honesty (only "unknown" when the column is 
       rows: [{ 'Campaign name': 'Rose - Sponsored Products', 'Ad group name': 'Rose AG', Targeting: 'rose body butter', Impressions: '400', Clicks: '9', 'Total cost': '3.60' }],
     });
     expect(rows[0].matchType).toBe('unknown');
+  });
+});
+
+describe('Sellerboard Product report "Sponsored products (PPC)" column (real-export regression)', () => {
+  // The real Sellerboard Product Profitability export has FIVE separate ad
+  // columns: "Ads" (total across every ad type), "Sponsored products
+  // (PPC)", "Sponsored Display", "Sponsored brands (HSA)", and "Sponsored
+  // Brands Video". Only "Sponsored products (PPC)" corresponds to what
+  // Amazon's own (Sponsored-Products-only) Campaign report spend
+  // represents — this is the exact shape that previously parsed adSpend as
+  // 0 for every row (no alias matched "Sponsored products (PPC)"),
+  // producing a false "Sellerboard PPC spend supplied to reconciliation =
+  // 0.00" and a false DATA MISMATCH REVIEW REQUIRED against real spend.
+  const realHeaders = [
+    'Marketplace', 'ASIN', 'SKU', 'Ads', 'Sponsored products (PPC)', 'Sponsored Display', 'Sponsored brands (HSA)', 'Sponsored Brands Video',
+  ];
+  const realFile = { name: 'sellerboard_product_2026-08-14_to_2026-08-17.csv', size: 4321 };
+
+  it('parses the exact real per-product "Sponsored products (PPC)" values (Rose -2.42, Coconut -18.25, Mango 0, Vanilla -3.21)', () => {
+    const raw: RawParsedFile = {
+      headers: realHeaders,
+      rows: [
+        { Marketplace: 'US', ASIN: 'B0GZVBBRZP', SKU: 'ROSE-001', Ads: '-4.10', 'Sponsored products (PPC)': '-2.42', 'Sponsored Display': '-1.68', 'Sponsored brands (HSA)': '0', 'Sponsored Brands Video': '0' },
+        { Marketplace: 'US', ASIN: 'B0GZVGXXS2', SKU: 'COCO-001', Ads: '-18.25', 'Sponsored products (PPC)': '-18.25', 'Sponsored Display': '0', 'Sponsored brands (HSA)': '0', 'Sponsored Brands Video': '0' },
+        { Marketplace: 'US', ASIN: 'B0GZVP9HRB', SKU: 'MANGO-001', Ads: '0', 'Sponsored products (PPC)': '0', 'Sponsored Display': '0', 'Sponsored brands (HSA)': '0', 'Sponsored Brands Video': '0' },
+        { Marketplace: 'US', ASIN: 'B0H28WG6BB', SKU: 'VAN-001', Ads: '-3.21', 'Sponsored products (PPC)': '-3.21', 'Sponsored Display': '0', 'Sponsored brands (HSA)': '0', 'Sponsored Brands Video': '0' },
+      ],
+    };
+    const { meta, rows } = importSellerboardProductReport(realFile, raw);
+
+    const bySku = Object.fromEntries(rows.map((r) => [r.sku, r.adSpend]));
+    expect(bySku['ROSE-001']).toBe(-2.42);
+    expect(bySku['COCO-001']).toBe(-18.25);
+    expect(bySku['MANGO-001']).toBe(0);
+    expect(bySku['VAN-001']).toBe(-3.21);
+
+    // Requirement #9: adSpend must no longer be reported as missing when
+    // "Sponsored products (PPC)" exists in the file.
+    expect(meta.missingOptionalFields).not.toContain('adSpend');
+
+    // The raw signed value is preserved as-is — sign normalization for
+    // reconciliation/accounting happens later, at aggregation, not here.
+    const total = rows.reduce((a, r) => a + r.adSpend, 0);
+    expect(total).toBeCloseTo(-23.88);
+    expect(Math.abs(total)).toBeCloseTo(23.88);
+  });
+
+  it('never reads the bare "Ads" column as adSpend, even though it is present in the same file', () => {
+    const raw: RawParsedFile = {
+      headers: realHeaders,
+      rows: [
+        { Marketplace: 'US', ASIN: 'B0GZVGXXS2', SKU: 'COCO-001', Ads: '-99.99', 'Sponsored products (PPC)': '-18.25', 'Sponsored Display': '0', 'Sponsored brands (HSA)': '0', 'Sponsored Brands Video': '0' },
+      ],
+    };
+    const { rows } = importSellerboardProductReport(realFile, raw);
+    // If "Ads" (a total across all ad types) had been used instead, this
+    // would be -99.99, not the Sponsored-Products-only figure.
+    expect(rows[0].adSpend).toBe(-18.25);
   });
 });
