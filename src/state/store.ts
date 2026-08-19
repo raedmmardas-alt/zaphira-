@@ -5,12 +5,14 @@ import type {
   SellerboardKeywordRow, SellerboardProductRow, TargetingRow,
 } from '../types';
 import { DEFAULT_PRODUCTS, DEFAULT_PRODUCT_MANUAL_ECONOMICS, DEFAULT_SETTINGS, blankManualEconomics } from '../types';
+import type { HeliumImportMeta, HeliumRawKeywordRow } from '../types/helium';
 import { DB_KEYS, localDb } from '../lib/storage/db';
 import { parseUploadedFile } from '../lib/parse/fileParser';
 import {
   importAdvertisedProductReport, importCampaignReport, importSearchTermReport,
   importSellerboardKeywordReport, importSellerboardProductReport, importTargetingReport,
 } from '../lib/parse/reportImporters';
+import { importHeliumKeywordFile as parseHeliumKeywordFile } from '../lib/parse/heliumImporter';
 import { periodKey } from '../lib/parse/periodEngine';
 
 export interface ReportRowsByType {
@@ -31,6 +33,15 @@ interface PersistedImport {
   rows: unknown[];
 }
 
+// Persisted entirely separately from the Amazon/Sellerboard reportMeta/
+// reportRows machinery (and its ReportType union) below — Helium keyword
+// data never feeds reconciliation, the period engine, or report-quality
+// status, so it deliberately isn't threaded through that shared pipeline.
+export interface HeliumImportState {
+  meta: HeliumImportMeta;
+  rows: HeliumRawKeywordRow[];
+}
+
 interface AppState {
   hydrated: boolean;
   settings: Settings;
@@ -43,6 +54,7 @@ interface AppState {
   deliveryWorkflow: Record<string, DeliveryWorkflowEntry>;
   manualKeywordHistory: { keyword: string; productId: string | null }[];
   productManualEconomics: Record<string, ProductManualEconomicsInputs>;
+  heliumImport: HeliumImportState | null;
 
   hydrate: () => Promise<void>;
   updateSettings: (partial: Partial<Settings>) => void;
@@ -63,6 +75,8 @@ interface AppState {
   setDeliveryWorkflowStatus: (targetKey: string, status: DeliveryWorkflowStatus, currentPeriod: DateRange | null) => void;
   addManualKeyword: (keyword: string, productId: string | null) => void;
   updateProductManualEconomics: (productId: string, partial: Partial<ProductManualEconomicsInputs>) => void;
+  importHeliumKeywordFile: (file: File) => Promise<HeliumImportMeta>;
+  deleteHeliumKeywordImport: () => void;
   resetAllData: () => Promise<void>;
 }
 
@@ -105,9 +119,10 @@ export const useAppStore = create<AppState>((set, get) => ({
   deliveryWorkflow: {},
   manualKeywordHistory: [],
   productManualEconomics: DEFAULT_PRODUCT_MANUAL_ECONOMICS,
+  heliumImport: null,
 
   hydrate: async () => {
-    const [settings, products, mappings, reports, anp, shadows, deliveryWf, manualKw, manualEcon] = await Promise.all([
+    const [settings, products, mappings, reports, anp, shadows, deliveryWf, manualKw, manualEcon, heliumImport] = await Promise.all([
       localDb.get<Settings>(DB_KEYS.settings),
       localDb.get<Product[]>(DB_KEYS.products),
       localDb.get<SavedAdGroupMapping[]>(DB_KEYS.savedAdGroupMappings),
@@ -117,6 +132,7 @@ export const useAppStore = create<AppState>((set, get) => ({
       localDb.get<Record<string, DeliveryWorkflowEntry>>(DB_KEYS.deliveryWorkflow),
       localDb.get<{ keyword: string; productId: string | null }[]>(DB_KEYS.manualKeywordHistory),
       localDb.get<Record<string, ProductManualEconomicsInputs>>(DB_KEYS.productManualEconomics),
+      localDb.get<HeliumImportState>(DB_KEYS.heliumKeywordImport),
     ]);
 
     const reportMeta: AppState['reportMeta'] = {};
@@ -145,6 +161,7 @@ export const useAppStore = create<AppState>((set, get) => ({
       deliveryWorkflow: deliveryWf ?? {},
       manualKeywordHistory: manualKw ?? [],
       productManualEconomics: resolvedManualEconomics,
+      heliumImport: heliumImport ?? null,
     });
     void localDb.set(DB_KEYS.productManualEconomics, resolvedManualEconomics);
   },
@@ -291,6 +308,20 @@ export const useAppStore = create<AppState>((set, get) => ({
     void localDb.set(DB_KEYS.productManualEconomics, next);
   },
 
+  importHeliumKeywordFile: async (file) => {
+    const raw = await parseUploadedFile(file);
+    const { meta, rows } = parseHeliumKeywordFile({ name: file.name, size: file.size }, raw);
+    const next: HeliumImportState = { meta, rows };
+    set({ heliumImport: next });
+    await localDb.set(DB_KEYS.heliumKeywordImport, next);
+    return meta;
+  },
+
+  deleteHeliumKeywordImport: () => {
+    set({ heliumImport: null });
+    void localDb.del(DB_KEYS.heliumKeywordImport);
+  },
+
   resetAllData: async () => {
     await Promise.all(Object.values(DB_KEYS).map((k) => localDb.del(k)));
     set({
@@ -304,6 +335,7 @@ export const useAppStore = create<AppState>((set, get) => ({
       deliveryWorkflow: {},
       manualKeywordHistory: [],
       productManualEconomics: DEFAULT_PRODUCT_MANUAL_ECONOMICS,
+      heliumImport: null,
     });
   },
 }));

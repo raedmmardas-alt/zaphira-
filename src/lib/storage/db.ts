@@ -19,4 +19,5 @@ export const DB_KEYS = {
   deliveryWorkflow: 'zaphira/deliveryWorkflow',
   manualKeywordHistory: 'zaphira/manualKeywordHistory',
   productManualEconomics: 'zaphira/productManualEconomics',
+  heliumKeywordImport: 'zaphira/heliumKeywordImport',
 } as const;

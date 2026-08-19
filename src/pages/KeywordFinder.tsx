@@ -1,30 +1,88 @@
-import { useRef, useState } from 'react';
+import { Fragment, useMemo, useRef, useState } from 'react';
 import type { ChangeEvent } from 'react';
 import { PageHeader } from '../components/ui/PageHeader';
 import { Card } from '../components/ui/Card';
 import { Table, Th, Td } from '../components/ui/Table';
 import { Badge } from '../components/ui/Badge';
+import type { BadgeTone } from '../components/ui/Badge';
 import { UploadIcon } from '../components/ui/Icons';
+import { useAppStore } from '../state/store';
+import { useWorkspace } from '../state/useWorkspace';
+import { formatCurrency, formatNumber } from '../lib/engine/metrics';
+import { aggregateHeliumKeywords } from '../lib/aggregate/heliumKeywords';
+import {
+  analyzeHeliumKeywords, buildKeywordBlueprint, buildKeywordCampaignSummary, sortKeywordResults,
+} from '../lib/engine/keywordIntelligence';
+import { downloadCsv } from '../lib/export/csv';
+import type { KeywordAction } from '../types/helium';
 
-// UI shell for the upcoming Helium 10 / Cerebro keyword intelligence
-// system. No parser or analysis engine exists for this data source yet —
-// this page deliberately does not fabricate keyword recommendations. It
-// only accepts a file locally (never sent anywhere; nothing is written to
-// the app's report store or IndexedDB) and shows what the finished
-// experience will look like once the analysis engine ships.
+// UI shell for the Helium 10 / Cerebro keyword intelligence system. Layout
+// is approved and unchanged — this file only connects real parsing,
+// analysis, scoring, bid recommendations, and campaign-budget
+// recommendations to it.
 const FUTURE_COLUMNS = [
   'Keyword', 'Search Volume', 'Competitor Strength', 'Zaphira PPC History', 'Opportunity Score',
   'Risk', 'Recommended Match Type', 'Recommended Bid', 'Maximum Safe Bid', 'Recommended Daily Budget', 'Action',
 ];
 
+const ACTION_TONE: Record<KeywordAction, BadgeTone> = { LAUNCH: 'positive', TEST: 'brand', WATCH: 'watch', AVOID: 'negative' };
+const RISK_TONE: Record<string, BadgeTone> = { LOW: 'positive', MEDIUM: 'watch', HIGH: 'negative', EXTREME: 'negative' };
+
 export function KeywordFinder() {
   const inputRef = useRef<HTMLInputElement>(null);
-  const [fileName, setFileName] = useState<string | null>(null);
+  const [busy, setBusy] = useState(false);
+  const [expanded, setExpanded] = useState<Set<string>>(new Set());
 
-  function onFile(e: ChangeEvent<HTMLInputElement>) {
+  const heliumImport = useAppStore((s) => s.heliumImport);
+  const importHeliumKeywordFile = useAppStore((s) => s.importHeliumKeywordFile);
+  const deleteHeliumKeywordImport = useAppStore((s) => s.deleteHeliumKeywordImport);
+  const products = useAppStore((s) => s.products);
+  const settings = useAppStore((s) => s.settings);
+  const productManualEconomics = useAppStore((s) => s.productManualEconomics);
+  const ws = useWorkspace();
+
+  async function onFile(e: ChangeEvent<HTMLInputElement>) {
     const file = e.target.files?.[0];
     if (!file) return;
-    setFileName(file.name);
+    setBusy(true);
+    try {
+      await importHeliumKeywordFile(file);
+    } finally {
+      setBusy(false);
+      if (inputRef.current) inputRef.current.value = '';
+    }
+  }
+
+  const results = useMemo(() => {
+    if (!heliumImport || heliumImport.rows.length === 0) return [];
+    const aggregates = aggregateHeliumKeywords(heliumImport.rows);
+    const analyzed = analyzeHeliumKeywords(aggregates, {
+      products, targets: ws.targets, searchTerms: ws.searchTerms, economicsById: ws.economicsById, productManualEconomics, settings,
+    });
+    return sortKeywordResults(analyzed);
+  }, [heliumImport, products, ws.targets, ws.searchTerms, ws.economicsById, productManualEconomics, settings]);
+
+  const summary = useMemo(() => buildKeywordCampaignSummary(results), [results]);
+  const blueprint = useMemo(() => buildKeywordBlueprint(results), [results]);
+
+  function toggleExpanded(key: string) {
+    setExpanded((prev) => {
+      const next = new Set(prev);
+      if (next.has(key)) next.delete(key); else next.add(key);
+      return next;
+    });
+  }
+
+  function exportBlueprintCsv() {
+    downloadCsv(
+      'zaphira_keyword_campaign_blueprint.csv',
+      ['Product', 'Campaign Name', 'Keyword', 'Match Type', 'Recommended Bid', 'Maximum Safe Bid', 'Recommended Daily Allocation', 'Action', 'Reason'],
+      blueprint.map((b) => [
+        b.productName, b.campaignName, b.keyword, b.matchType,
+        b.recommendedBid !== null ? b.recommendedBid.toFixed(2) : '', b.maxSafeBid !== null ? b.maxSafeBid.toFixed(2) : '',
+        b.recommendedDailyAllocation !== null ? b.recommendedDailyAllocation.toFixed(2) : '', b.action, b.reason,
+      ]),
+    );
   }
 
   return (
@@ -36,15 +94,24 @@ export function KeywordFinder() {
             <UploadIcon className="text-navy-400" width={28} height={28} />
             <button
               onClick={() => inputRef.current?.click()}
-              className="mt-4 rounded-lg bg-brand-600 px-4 py-2 text-sm font-medium text-white hover:bg-brand-700"
+              disabled={busy}
+              className="mt-4 rounded-lg bg-brand-600 px-4 py-2 text-sm font-medium text-white hover:bg-brand-700 disabled:opacity-50"
             >
-              Upload Helium 10 CSV / XLSX
+              {busy ? 'Analyzing…' : 'Upload Helium 10 CSV / XLSX'}
             </button>
             <input ref={inputRef} type="file" accept=".csv,.xlsx,.xls" className="hidden" onChange={onFile} />
-            {fileName ? (
+            {heliumImport ? (
               <div className="mt-4 max-w-md text-xs text-navy-600">
-                <div className="font-medium text-navy-900">{fileName} received.</div>
-                <div className="mt-1">The keyword analysis engine isn't connected yet — this page is a preview of what's coming. Nothing was uploaded anywhere; the file stays on this device only.</div>
+                <div className="font-medium text-navy-900">{heliumImport.meta.filename} — {formatNumber(heliumImport.meta.rowCount)} rows.</div>
+                {heliumImport.meta.status === 'FORMAT_NOT_RECOGNIZED' ? (
+                  <div className="mt-1 text-negative-600">No usable keyword column was found in this file. Check the export and try again.</div>
+                ) : (
+                  <div className="mt-1">
+                    {results.length} unique keyword{results.length === 1 ? '' : 's'} analyzed.
+                    {heliumImport.meta.status === 'DEGRADED' && ' Some optional Helium columns were not found — analysis continues with the data available.'}
+                  </div>
+                )}
+                <button onClick={deleteHeliumKeywordImport} className="mt-2 text-xs font-medium text-negative-600 hover:underline">Remove this file</button>
               </div>
             ) : (
               <p className="mt-3 max-w-md text-xs text-navy-500">Files stay on this device. Nothing is uploaded to a remote server.</p>
@@ -52,19 +119,19 @@ export function KeywordFinder() {
           </div>
         </Card>
 
-        <Card title="Recommended Campaign" subtitle="Filled in automatically once keyword data has been analyzed.">
+        <Card title="Recommended Campaign" subtitle="Only counts keywords classified LAUNCH or TEST below — an estimated planning maximum, not guaranteed spend.">
           <div className="grid grid-cols-1 gap-4 sm:grid-cols-3">
             <div className="rounded-xl border border-border-subtle p-4">
               <div className="text-xs font-medium uppercase tracking-wide text-navy-500">Keywords</div>
-              <div className="mt-1 text-2xl font-semibold text-navy-300">—</div>
+              <div className={`mt-1 text-2xl font-semibold ${summary.keywordCount > 0 ? 'text-navy-900' : 'text-navy-300'}`}>{summary.keywordCount > 0 ? summary.keywordCount : '—'}</div>
             </div>
             <div className="rounded-xl border border-border-subtle p-4">
               <div className="text-xs font-medium uppercase tracking-wide text-navy-500">Recommended Daily Budget</div>
-              <div className="mt-1 text-2xl font-semibold text-navy-300">—</div>
+              <div className={`mt-1 text-2xl font-semibold ${summary.keywordCount > 0 ? 'text-navy-900' : 'text-navy-300'}`}>{summary.keywordCount > 0 ? formatCurrency(summary.recommendedDailyBudget) : '—'}</div>
             </div>
             <div className="rounded-xl border border-border-subtle p-4">
               <div className="text-xs font-medium uppercase tracking-wide text-navy-500">Estimated Monthly Budget</div>
-              <div className="mt-1 text-2xl font-semibold text-navy-300">—</div>
+              <div className={`mt-1 text-2xl font-semibold ${summary.keywordCount > 0 ? 'text-navy-900' : 'text-navy-300'}`}>{summary.keywordCount > 0 ? formatCurrency(summary.estimatedMonthlyBudget) : '—'}</div>
             </div>
           </div>
         </Card>
@@ -75,17 +142,75 @@ export function KeywordFinder() {
               <tr>{FUTURE_COLUMNS.map((c) => <Th key={c}>{c}</Th>)}</tr>
             </thead>
             <tbody>
-              <tr><Td colSpan={FUTURE_COLUMNS.length} className="text-navy-500">No keyword data uploaded yet. Upload a Helium 10 / Cerebro export above to get started.</Td></tr>
+              {results.length === 0 && (
+                <tr><Td colSpan={FUTURE_COLUMNS.length} className="text-navy-500">No keyword data uploaded yet. Upload a Helium 10 / Cerebro export above to get started.</Td></tr>
+              )}
+              {results.map((r) => (
+                <Fragment key={r.normalizedKeyword}>
+                  <tr onClick={() => toggleExpanded(r.normalizedKeyword)} className="cursor-pointer hover:bg-navy-900/[0.02]" title="Click for why this keyword was scored this way">
+                    <Td className="max-w-[220px] truncate font-medium text-navy-900">{r.keyword}</Td>
+                    <Td>{r.searchVolume !== null ? formatNumber(r.searchVolume) : '—'}</Td>
+                    <Td className="max-w-[200px] truncate text-xs text-navy-600" title={r.competitorStrengthLabel}>{r.competitorStrengthLabel}</Td>
+                    <Td className="max-w-[220px] truncate text-xs text-navy-600" title={r.zaphiraHistory.label}>{r.zaphiraHistory.label}</Td>
+                    <Td>{r.opportunityScore}</Td>
+                    <Td><Badge tone={RISK_TONE[r.risk]}>{r.risk}</Badge></Td>
+                    <Td className="text-xs">{r.recommendedMatchType}</Td>
+                    <Td>{r.recommendedBid !== null ? formatCurrency(r.recommendedBid) : '—'}</Td>
+                    <Td>{r.maxSafeBid !== null ? formatCurrency(r.maxSafeBid) : '—'}</Td>
+                    <Td>{r.recommendedDailyBudget !== null ? formatCurrency(r.recommendedDailyBudget) : '—'}</Td>
+                    <Td><Badge tone={ACTION_TONE[r.action]}>{r.action}</Badge></Td>
+                  </tr>
+                  {expanded.has(r.normalizedKeyword) && (
+                    <tr>
+                      <Td colSpan={FUTURE_COLUMNS.length} className="bg-navy-900/[0.02] text-xs text-navy-600">
+                        <span className="font-medium text-navy-500">Why? </span>{r.explanation}
+                        {r.productName && <span className="ml-2 text-navy-400">Product: {r.productName}</span>}
+                        <span className="ml-2 text-navy-400">Confidence: {r.confidence}</span>
+                      </Td>
+                    </tr>
+                  )}
+                </Fragment>
+              ))}
             </tbody>
           </Table>
           <div className="mt-4 flex flex-wrap items-center gap-2">
-            <span className="text-xs font-medium uppercase tracking-wide text-navy-500">Coming actions:</span>
+            <span className="text-xs font-medium uppercase tracking-wide text-navy-500">Actions:</span>
             <Badge tone="positive">LAUNCH</Badge>
             <Badge tone="brand">TEST</Badge>
             <Badge tone="negative">AVOID</Badge>
             <Badge tone="watch">WATCH</Badge>
+            <span className="ml-2 text-xs text-navy-400">Click a row for why it was scored this way.</span>
           </div>
         </Card>
+
+        {blueprint.length > 0 && (
+          <Card
+            title="Campaign Blueprint"
+            subtitle="A build sheet to follow manually in Seller Central. Zaphira never publishes anything to Amazon automatically."
+            actions={<button onClick={exportBlueprintCsv} className="rounded-lg border border-border-subtle px-3 py-1.5 text-xs font-medium text-navy-700 hover:bg-navy-900/5">Download Blueprint CSV</button>}
+          >
+            <Table>
+              <thead>
+                <tr><Th>Product</Th><Th>Suggested Campaign Name</Th><Th>Keyword</Th><Th>Match Type</Th><Th>Recommended Bid</Th><Th>Maximum Safe Bid</Th><Th>Recommended Daily Allocation</Th><Th>Action</Th><Th>Reason</Th></tr>
+              </thead>
+              <tbody>
+                {blueprint.map((b, i) => (
+                  <tr key={`${b.campaignName}-${b.keyword}-${i}`}>
+                    <Td>{b.productName}</Td>
+                    <Td className="font-mono text-xs">{b.campaignName}</Td>
+                    <Td className="max-w-[200px] truncate font-medium text-navy-900">{b.keyword}</Td>
+                    <Td className="text-xs">{b.matchType}</Td>
+                    <Td>{b.recommendedBid !== null ? formatCurrency(b.recommendedBid) : '—'}</Td>
+                    <Td>{b.maxSafeBid !== null ? formatCurrency(b.maxSafeBid) : '—'}</Td>
+                    <Td>{b.recommendedDailyAllocation !== null ? formatCurrency(b.recommendedDailyAllocation) : '—'}</Td>
+                    <Td><Badge tone={ACTION_TONE[b.action]}>{b.action}</Badge></Td>
+                    <Td className="max-w-[280px] truncate text-xs text-navy-600" title={b.reason}>{b.reason}</Td>
+                  </tr>
+                ))}
+              </tbody>
+            </Table>
+          </Card>
+        )}
       </div>
     </div>
   );
