@@ -34,6 +34,14 @@ const CONSERVATIVE_DEFAULT_CVR = 0.05;
 const CONSERVATIVE_CVR_CEILING = 0.10;
 const MIN_CLICKS_FOR_CVR_EVIDENCE = 30;
 
+// Safety ceiling on how many keywords the Recommended Campaign shortlist can
+// ever contain, independent of budget. The account daily PPC budget (see
+// selectRecommendedCampaignKeywords) is the binding constraint in practice —
+// this just stops an unrealistically long "campaign" even in the rare case
+// budget alone wouldn't. An early-stage account's real campaign should be a
+// focused shortlist, not every keyword that happens to be buildable.
+export const MAX_CAMPAIGN_KEYWORDS = 30;
+
 const GENERIC_RELEVANCE_TERMS = [
   'body butter', 'whipped body butter', 'body butter for women', 'body butter for dry skin',
   'body butter for men', 'natural body butter', 'organic body butter', 'body cream', 'body lotion',
@@ -626,32 +634,108 @@ export function isBuildableKeyword(r: KeywordIntelligenceResult): boolean {
   );
 }
 
-export function buildKeywordCampaignSummary(results: KeywordIntelligenceResult[]): KeywordCampaignSummary {
-  const buildable = results.filter(isBuildableKeyword);
-  // Sum of each keyword's own already-guardrailed allocation (itself capped
-  // at a quarter of the account daily budget) — never simply totaling
-  // unrealistic per-keyword maximums, and never exceeding what each
-  // keyword's own economics/risk already bounded.
-  const recommendedDailyBudget = round2(buildable.reduce((a, r) => a + (r.recommendedDailyBudget ?? 0), 0));
+const RISK_RANK: Record<KeywordRisk, number> = { LOW: 0, MEDIUM: 1, HIGH: 2, EXTREME: 3 };
+
+// Existing positive Zaphira PPC evidence, ranked strongest first. A keyword
+// with proven orders is preferred over one that's merely been clicked, which
+// in turn is preferred over one that's never been tested at all.
+function historyEvidenceRank(h: KeywordZaphiraHistory): number {
+  if (h.isHistoricalWinner) return 3;
+  if (h.orders > 0) return 2;
+  if (h.clicks > 0) return 1;
+  return 0;
+}
+
+// Economics headroom: how much room sits between the recommended bid and
+// the safe ceiling. A keyword recommended well under its own safe maximum
+// is a safer pick than one bidding right up against it.
+function economicsHeadroom(r: KeywordIntelligenceResult): number {
+  if (r.maxSafeBid === null || r.recommendedBid === null) return 0;
+  return r.maxSafeBid - r.recommendedBid;
+}
+
+// Ranks buildable candidates for the Recommended Campaign shortlist — never
+// used to alter any computed intelligence value, only to decide selection
+// order once a keyword already qualifies as buildable. Priority order
+// matches the V1 spec: action (LAUNCH before TEST), opportunity score,
+// risk, multi-competitor evidence strength, existing positive Zaphira PPC
+// evidence, then economics safety margin. Deterministic tiebreak by
+// normalized keyword text so selection never depends on array order.
+function compareForCampaignSelection(a: KeywordIntelligenceResult, b: KeywordIntelligenceResult): number {
+  const actionDiff = ACTION_ORDER[a.action] - ACTION_ORDER[b.action];
+  if (actionDiff !== 0) return actionDiff;
+  if (a.opportunityScore !== b.opportunityScore) return b.opportunityScore - a.opportunityScore;
+  const riskDiff = RISK_RANK[a.risk] - RISK_RANK[b.risk];
+  if (riskDiff !== 0) return riskDiff;
+  if (a.competitorCount !== b.competitorCount) return b.competitorCount - a.competitorCount;
+  if (a.sourceCount !== b.sourceCount) return b.sourceCount - a.sourceCount;
+  const historyDiff = historyEvidenceRank(b.zaphiraHistory) - historyEvidenceRank(a.zaphiraHistory);
+  if (historyDiff !== 0) return historyDiff;
+  const headroomDiff = economicsHeadroom(b) - economicsHeadroom(a);
+  if (headroomDiff !== 0) return headroomDiff;
+  return a.normalizedKeyword.localeCompare(b.normalizedKeyword);
+}
+
+// The Recommended Campaign is a ranked SHORTLIST constrained by the actual
+// account daily PPC budget (settings.maxDailyPpcBudget) — never every
+// buildable keyword summed together. This is the fix for a real-data
+// regression: with a large multi-competitor Helium dataset, 1,000+ keywords
+// could independently qualify as buildable, and summing all of their
+// individually-valid allocations produced a "recommended" daily budget many
+// times the account's actual configured budget (e.g. $4,256.54/day against
+// a $16/day account). Each keyword's own recommendedDailyBudget is reused
+// unchanged (still capped at a quarter of the account budget by
+// computeKeywordDailyBudget) — this function only decides how many of those
+// already-safe allocations the account can actually afford at once, ranked
+// best-first, greedily taking any candidate that still fits the remaining
+// budget (never stopping at the first one that doesn't, since a smaller
+// allocation further down the ranking may still fit) up to the
+// MAX_CAMPAIGN_KEYWORDS safety ceiling.
+export function selectRecommendedCampaignKeywords(
+  results: KeywordIntelligenceResult[],
+  maxDailyPpcBudget: number,
+  maxKeywords: number = MAX_CAMPAIGN_KEYWORDS,
+): KeywordIntelligenceResult[] {
+  const ranked = results.filter(isBuildableKeyword).sort(compareForCampaignSelection);
+  const selected: KeywordIntelligenceResult[] = [];
+  let total = 0;
+  for (const r of ranked) {
+    if (selected.length >= maxKeywords) break;
+    const allocation = r.recommendedDailyBudget ?? 0;
+    const nextTotal = round2(total + allocation);
+    if (nextTotal <= maxDailyPpcBudget) {
+      selected.push(r);
+      total = nextTotal;
+    }
+  }
+  return selected;
+}
+
+export function buildKeywordCampaignSummary(results: KeywordIntelligenceResult[], maxDailyPpcBudget: number): KeywordCampaignSummary {
+  const buildableCount = results.filter(isBuildableKeyword).length;
+  const selected = selectRecommendedCampaignKeywords(results, maxDailyPpcBudget);
+  // Sum of only the selected shortlist's already-guardrailed allocations —
+  // never simply totaling every buildable keyword's maximum, and never
+  // exceeding the account's own configured daily PPC budget.
+  const recommendedDailyBudget = round2(selected.reduce((a, r) => a + (r.recommendedDailyBudget ?? 0), 0));
   return {
-    keywordCount: buildable.length,
+    keywordCount: selected.length,
     recommendedDailyBudget,
     estimatedMonthlyBudget: round2(recommendedDailyBudget * 30.4),
+    additionalBuildableKeywordsAvailable: Math.max(0, buildableCount - selected.length),
   };
 }
 
-export function buildKeywordBlueprint(results: KeywordIntelligenceResult[]): KeywordBlueprintRow[] {
-  return results
-    .filter(isBuildableKeyword)
-    .map((r) => ({
-      productName: r.productName!,
-      campaignName: `ZAP-${r.productName}-KeywordIntel-${r.recommendedMatchType === 'EXACT' ? 'Exact' : 'Phrase'}`,
-      keyword: r.keyword,
-      matchType: r.recommendedMatchType,
-      recommendedBid: r.recommendedBid,
-      maxSafeBid: r.maxSafeBid,
-      recommendedDailyAllocation: r.recommendedDailyBudget,
-      action: r.action,
-      reason: r.explanation,
-    }));
+export function buildKeywordBlueprint(results: KeywordIntelligenceResult[], maxDailyPpcBudget: number): KeywordBlueprintRow[] {
+  return selectRecommendedCampaignKeywords(results, maxDailyPpcBudget).map((r) => ({
+    productName: r.productName!,
+    campaignName: `ZAP-${r.productName}-KeywordIntel-${r.recommendedMatchType === 'EXACT' ? 'Exact' : 'Phrase'}`,
+    keyword: r.keyword,
+    matchType: r.recommendedMatchType,
+    recommendedBid: r.recommendedBid,
+    maxSafeBid: r.maxSafeBid,
+    recommendedDailyAllocation: r.recommendedDailyBudget,
+    action: r.action,
+    reason: r.explanation,
+  }));
 }

@@ -6,6 +6,7 @@ import {
   analyzeHeliumKeyword, analyzeHeliumKeywords, matchProductRelevance, detectCompetitorBrand, findZaphiraHistory,
   resolveBreakEvenCpa, resolveAssumedCvr, computeMaxSafeBid, computeRecommendedBid,
   buildKeywordCampaignSummary, buildKeywordBlueprint, sortKeywordResults, isBuildableKeyword, computeBidUnavailableReason,
+  selectRecommendedCampaignKeywords, MAX_CAMPAIGN_KEYWORDS,
 } from './keywordIntelligence';
 import type { KeywordIntelligenceContext } from './keywordIntelligence';
 
@@ -382,7 +383,7 @@ describe('buildKeywordCampaignSummary — total daily and monthly budget', () =>
       ],
       baseContext(),
     );
-    const summary = buildKeywordCampaignSummary(results);
+    const summary = buildKeywordCampaignSummary(results, DEFAULT_SETTINGS.maxDailyPpcBudget);
     const expectedDaily = results.filter((r) => r.action === 'LAUNCH' || r.action === 'TEST').reduce((a, r) => a + (r.recommendedDailyBudget ?? 0), 0);
     expect(summary.recommendedDailyBudget).toBeCloseTo(expectedDaily, 2);
     expect(summary.estimatedMonthlyBudget).toBeCloseTo(expectedDaily * 30.4, 1);
@@ -392,7 +393,7 @@ describe('buildKeywordCampaignSummary — total daily and monthly budget', () =>
   it('returns a zero-keyword, zero-budget summary when nothing qualifies', () => {
     const ctx = baseContext({ targets: [target({ targetingText: 'coconut body butter', isCurrentPeriod: false, clicks: 40, spend: 18, orders: 0 })] });
     const results = analyzeHeliumKeywords([baseAggregate()], ctx); // AVOID scenario
-    const summary = buildKeywordCampaignSummary(results);
+    const summary = buildKeywordCampaignSummary(results, DEFAULT_SETTINGS.maxDailyPpcBudget);
     expect(summary.keywordCount).toBe(0);
     expect(summary.recommendedDailyBudget).toBe(0);
     expect(summary.estimatedMonthlyBudget).toBe(0);
@@ -402,7 +403,7 @@ describe('buildKeywordCampaignSummary — total daily and monthly budget', () =>
 describe('buildKeywordBlueprint', () => {
   it('builds a per-keyword build sheet with a product-scoped campaign name, only for LAUNCH/TEST keywords', () => {
     const results = analyzeHeliumKeywords([baseAggregate()], baseContext());
-    const blueprint = buildKeywordBlueprint(results);
+    const blueprint = buildKeywordBlueprint(results, DEFAULT_SETTINGS.maxDailyPpcBudget);
     expect(blueprint.length).toBeGreaterThan(0);
     const row = blueprint[0];
     expect(row.campaignName).toMatch(/^ZAP-Coconut-KeywordIntel-(Exact|Phrase)$/);
@@ -544,7 +545,7 @@ describe('Campaign summary/blueprint consistency — the exact "161 keywords / $
     );
     const results = analyzeHeliumKeywords(manyGenericAggregates, ctx);
     const testOrLaunchCount = results.filter((r) => r.action === 'LAUNCH' || r.action === 'TEST').length;
-    const summary = buildKeywordCampaignSummary(results);
+    const summary = buildKeywordCampaignSummary(results, DEFAULT_SETTINGS.maxDailyPpcBudget);
 
     // The bug scenario: action alone would have counted many of these.
     expect(testOrLaunchCount).toBeGreaterThan(0);
@@ -562,12 +563,12 @@ describe('Campaign summary/blueprint consistency — the exact "161 keywords / $
     const buildable = analyzeHeliumKeyword(baseAggregate(), baseContext(), 0.05); // full economics, definite product
     const results = sortKeywordResults([nonBuildable, buildable]);
 
-    const summary = buildKeywordCampaignSummary(results);
+    const summary = buildKeywordCampaignSummary(results, DEFAULT_SETTINGS.maxDailyPpcBudget);
     expect(summary.keywordCount).toBe(1);
     expect(summary.recommendedDailyBudget).toBeGreaterThan(0);
     expect(summary.estimatedMonthlyBudget).toBeCloseTo(summary.recommendedDailyBudget * 30.4, 1);
 
-    const blueprint = buildKeywordBlueprint(results);
+    const blueprint = buildKeywordBlueprint(results, DEFAULT_SETTINGS.maxDailyPpcBudget);
     expect(blueprint).toHaveLength(1);
     expect(blueprint[0].keyword).toBe(buildable.keyword);
     // Never a blueprint row with missing bid economics.
@@ -587,7 +588,126 @@ describe('Campaign summary/blueprint consistency — the exact "161 keywords / $
       ],
       ctx,
     );
-    const blueprint = buildKeywordBlueprint(results);
+    const blueprint = buildKeywordBlueprint(results, DEFAULT_SETTINGS.maxDailyPpcBudget);
     expect(blueprint).toHaveLength(0);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Recommended Campaign is a ranked, budget-capped SHORTLIST (V1 critical fix)
+// ---------------------------------------------------------------------------
+
+describe('selectRecommendedCampaignKeywords / buildKeywordCampaignSummary — budget-capped shortlist, not a sum of everything buildable', () => {
+  // Reproduces the real live regression: a large multi-competitor Helium
+  // dataset where far more keywords are individually buildable than a small
+  // account's actual daily PPC budget could ever fund. Previously the
+  // campaign summary summed every buildable keyword's own allocation
+  // (1,773 keywords -> $4,256.54/day against a $16/day account). The fix
+  // ranks buildable candidates best-first and only takes as many as fit the
+  // account's configured budget, up to MAX_CAMPAIGN_KEYWORDS.
+  function manyBuildableAggregates(count: number): HeliumKeywordAggregate[] {
+    const scents = ['coconut', 'vanilla', 'rose', 'mango'];
+    return Array.from({ length: count }, (_, i) => {
+      const scent = scents[i % scents.length];
+      return baseAggregate({
+        keyword: `${scent} body butter variant ${i}`,
+        normalizedKeyword: `${scent} body butter variant ${i}`,
+        suggestedBid: null,
+        competitorCount: 3 + (i % 3),
+        bestOrganicRank: 5 + (i % 20),
+        bestSponsoredRank: 3 + (i % 10),
+        titleDensity: 2,
+        competingProducts: 400,
+        maxSearchVolume: 2000 + i,
+      });
+    });
+  }
+
+  it('reproduces the live regression: ~1,773-style buildable count with a $16/day account budget never produces a $4,256.54/day recommendation', () => {
+    const aggregates = manyBuildableAggregates(2000);
+    const results = analyzeHeliumKeywords(aggregates, baseContext());
+    const buildableCount = results.filter(isBuildableKeyword).length;
+    expect(buildableCount).toBeGreaterThan(100); // confirms the fixture actually reproduces "many buildable keywords"
+
+    const summary = buildKeywordCampaignSummary(results, 16);
+    expect(summary.keywordCount).toBeGreaterThan(0);
+    expect(summary.keywordCount).toBeLessThanOrEqual(MAX_CAMPAIGN_KEYWORDS);
+    expect(summary.recommendedDailyBudget).toBeGreaterThan(0);
+    expect(summary.recommendedDailyBudget).toBeLessThanOrEqual(16);
+    expect(summary.estimatedMonthlyBudget).toBeLessThanOrEqual(16 * 30.4);
+    expect(summary.estimatedMonthlyBudget).toBeCloseTo(summary.recommendedDailyBudget * 30.4, 1);
+    // Far more were buildable than got selected — the shortlist is real.
+    expect(summary.additionalBuildableKeywordsAvailable).toBeGreaterThan(0);
+    expect(summary.additionalBuildableKeywordsAvailable).toBe(buildableCount - summary.keywordCount);
+  });
+
+  it('the blueprint contains exactly the selected shortlist, never every buildable keyword', () => {
+    const aggregates = manyBuildableAggregates(500);
+    const results = analyzeHeliumKeywords(aggregates, baseContext());
+    const selected = selectRecommendedCampaignKeywords(results, 16);
+    const blueprint = buildKeywordBlueprint(results, 16);
+    expect(blueprint).toHaveLength(selected.length);
+    expect(blueprint.map((b) => b.keyword).sort()).toEqual(selected.map((r) => r.keyword).sort());
+    for (const row of blueprint) {
+      expect(row.recommendedBid).not.toBeNull();
+      expect(row.maxSafeBid).not.toBeNull();
+      expect(row.recommendedDailyAllocation).not.toBeNull();
+    }
+  });
+
+  it('every non-selected buildable keyword still exists in the full results array (never hidden from Keyword Opportunities)', () => {
+    const aggregates = manyBuildableAggregates(500);
+    const results = analyzeHeliumKeywords(aggregates, baseContext());
+    const selected = selectRecommendedCampaignKeywords(results, 16);
+    const selectedKeywords = new Set(selected.map((r) => r.normalizedKeyword));
+    const buildable = results.filter(isBuildableKeyword);
+    const nonSelectedBuildable = buildable.filter((r) => !selectedKeywords.has(r.normalizedKeyword));
+    expect(nonSelectedBuildable.length).toBeGreaterThan(0);
+    // Every one of those is still present in the unfiltered results array.
+    for (const r of nonSelectedBuildable) {
+      expect(results.some((x) => x.normalizedKeyword === r.normalizedKeyword)).toBe(true);
+    }
+  });
+
+  it('ranks LAUNCH before TEST, then by opportunity score descending, then lower risk first', () => {
+    const results = analyzeHeliumKeywords(manyBuildableAggregates(200), baseContext());
+    const selected = selectRecommendedCampaignKeywords(results, 16);
+    for (let i = 1; i < selected.length; i++) {
+      const prev = selected[i - 1];
+      const cur = selected[i];
+      const actionRank: Record<string, number> = { LAUNCH: 0, TEST: 1, WATCH: 2, AVOID: 3 };
+      if (actionRank[prev.action] !== actionRank[cur.action]) {
+        expect(actionRank[prev.action]).toBeLessThanOrEqual(actionRank[cur.action]);
+      } else if (prev.opportunityScore !== cur.opportunityScore) {
+        expect(prev.opportunityScore).toBeGreaterThanOrEqual(cur.opportunityScore);
+      }
+    }
+  });
+
+  it('adapts automatically to the configured account daily PPC budget: $10, $16, $25, $50', () => {
+    const results = analyzeHeliumKeywords(manyBuildableAggregates(1000), baseContext());
+    const budgets = [10, 16, 25, 50];
+    const summaries = budgets.map((b) => buildKeywordCampaignSummary(results, b));
+    for (let i = 0; i < budgets.length; i++) {
+      expect(summaries[i].recommendedDailyBudget).toBeLessThanOrEqual(budgets[i]);
+      expect(summaries[i].keywordCount).toBeLessThanOrEqual(MAX_CAMPAIGN_KEYWORDS);
+    }
+    // A larger budget never funds fewer (or a smaller) shortlist than a
+    // stricter one — more room can only ever afford as much or more.
+    for (let i = 1; i < budgets.length; i++) {
+      expect(summaries[i].recommendedDailyBudget).toBeGreaterThanOrEqual(summaries[i - 1].recommendedDailyBudget);
+      expect(summaries[i].keywordCount).toBeGreaterThanOrEqual(summaries[i - 1].keywordCount);
+    }
+  });
+
+  it('a small buildable set well under budget is never trimmed — the budget cap only trims when it must', () => {
+    const results = analyzeHeliumKeywords(
+      [baseAggregate(), baseAggregate({ keyword: 'vanilla body butter', normalizedKeyword: 'vanilla body butter' })],
+      baseContext(),
+    );
+    const buildableCount = results.filter(isBuildableKeyword).length;
+    const summary = buildKeywordCampaignSummary(results, 16);
+    expect(summary.keywordCount).toBe(buildableCount);
+    expect(summary.additionalBuildableKeywordsAvailable).toBe(0);
   });
 });

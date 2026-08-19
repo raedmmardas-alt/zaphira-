@@ -118,9 +118,14 @@ export interface KeywordIntelligenceResult {
 }
 
 export interface KeywordCampaignSummary {
-  keywordCount: number; // LAUNCH + TEST only
-  recommendedDailyBudget: number;
-  estimatedMonthlyBudget: number;
+  keywordCount: number; // size of the ranked, budget-capped shortlist actually selected — never every buildable keyword
+  recommendedDailyBudget: number; // always <= the account's configured daily PPC budget
+  estimatedMonthlyBudget: number; // recommendedDailyBudget * 30.4
+  // How many additional buildable keywords exist beyond the selected
+  // shortlist, purely because the account daily PPC budget couldn't fund
+  // them too. Used to show "Additional opportunities available if budget is
+  // increased" without ever silently exceeding the configured budget.
+  additionalBuildableKeywordsAvailable: number;
 }
 
 export interface KeywordBlueprintRow {

@@ -11,7 +11,7 @@ import { useWorkspace } from '../state/useWorkspace';
 import { formatCurrency, formatNumber } from '../lib/engine/metrics';
 import { aggregateHeliumKeywords } from '../lib/aggregate/heliumKeywords';
 import {
-  analyzeHeliumKeywords, buildKeywordBlueprint, buildKeywordCampaignSummary, sortKeywordResults,
+  analyzeHeliumKeywords, buildKeywordBlueprint, buildKeywordCampaignSummary, selectRecommendedCampaignKeywords, sortKeywordResults,
 } from '../lib/engine/keywordIntelligence';
 import { downloadCsv } from '../lib/export/csv';
 import { nextSortState, sortKeywordResultsForDisplay, type SortColumn, type SortDirection } from '../lib/engine/keywordSorting';
@@ -24,6 +24,15 @@ import type { KeywordAction, KeywordIntelligenceResult } from '../types/helium';
 // and column sorting to it.
 const ACTION_TONE: Record<KeywordAction, BadgeTone> = { LAUNCH: 'positive', TEST: 'brand', WATCH: 'watch', AVOID: 'negative' };
 const RISK_TONE: Record<string, BadgeTone> = { LOW: 'positive', MEDIUM: 'watch', HIGH: 'negative', EXTREME: 'negative' };
+
+// A large multi-competitor Cerebro import can produce tens of thousands of
+// analyzed keywords (e.g. ~24,795 unique keywords across 4 sources). The
+// intelligence engine itself handles that in well under a second, but
+// rendering every row as a DOM <tr> at once does not — real-data testing
+// crashed the browser tab. Paginating the (already fully analyzed, already
+// fully sorted) results array keeps every keyword included in the dataset
+// and every keyword reachable, while only ever mounting one page of rows.
+const OPPORTUNITIES_PAGE_SIZE = 100;
 
 const SORT_HEADERS: { label: string; column: SortColumn }[] = [
   { label: 'Keyword', column: 'keyword' },
@@ -68,6 +77,7 @@ export function KeywordFinder() {
   const [expanded, setExpanded] = useState<Set<string>>(new Set());
   const [sortColumn, setSortColumn] = useState<SortColumn | null>(null);
   const [sortDirection, setSortDirection] = useState<SortDirection>('asc');
+  const [page, setPage] = useState(0);
 
   const heliumSources = useAppStore((s) => s.heliumSources);
   const addHeliumKeywordFile = useAppStore((s) => s.addHeliumKeywordFile);
@@ -105,6 +115,7 @@ export function KeywordFinder() {
     const next = nextSortState({ column: sortColumn, direction: sortDirection }, column);
     setSortColumn(next.column);
     setSortDirection(next.direction);
+    setPage(0);
   }
 
   // Kept as its own memo so a re-sort (below) never re-runs the intelligence
@@ -121,8 +132,25 @@ export function KeywordFinder() {
 
   const displayedResults = useMemo(() => sortKeywordResultsForDisplay(results, sortColumn, sortDirection), [results, sortColumn, sortDirection]);
 
-  const summary = useMemo(() => buildKeywordCampaignSummary(results), [results]);
-  const blueprint = useMemo(() => buildKeywordBlueprint(results), [results]);
+  const totalPages = Math.max(1, Math.ceil(displayedResults.length / OPPORTUNITIES_PAGE_SIZE));
+  const clampedPage = Math.min(page, totalPages - 1);
+  const pageStart = clampedPage * OPPORTUNITIES_PAGE_SIZE;
+  const pagedResults = useMemo(
+    () => displayedResults.slice(pageStart, pageStart + OPPORTUNITIES_PAGE_SIZE),
+    [displayedResults, pageStart],
+  );
+
+  const maxDailyPpcBudget = settings.maxDailyPpcBudget;
+  const summary = useMemo(() => buildKeywordCampaignSummary(results, maxDailyPpcBudget), [results, maxDailyPpcBudget]);
+  const blueprint = useMemo(() => buildKeywordBlueprint(results, maxDailyPpcBudget), [results, maxDailyPpcBudget]);
+  // Which opportunities made the ranked, budget-capped shortlist — used only
+  // to tag rows in the (unfiltered) Keyword Opportunities table below.
+  // Every analyzed keyword still appears in that table regardless of
+  // selection; this never hides an opportunity.
+  const selectedKeywordSet = useMemo(
+    () => new Set(selectRecommendedCampaignKeywords(results, maxDailyPpcBudget).map((r) => r.normalizedKeyword)),
+    [results, maxDailyPpcBudget],
+  );
 
   function toggleExpanded(key: string) {
     setExpanded((prev) => {
@@ -214,7 +242,7 @@ export function KeywordFinder() {
           <input ref={inputRef} type="file" accept=".csv,.xlsx,.xls" className="hidden" onChange={onFile} />
         </Card>
 
-        <Card title="Recommended Campaign" subtitle="Only counts buildable keywords: LAUNCH or TEST, a definite product, and a calculated safe bid. An estimated planning maximum, not guaranteed spend.">
+        <Card title="Recommended Campaign" subtitle={`A ranked shortlist of buildable keywords (LAUNCH/TEST, definite product, calculated safe bid) that fits inside your ${formatCurrency(maxDailyPpcBudget)}/day account PPC budget. An estimated planning maximum, not guaranteed spend.`}>
           <div className="grid grid-cols-1 gap-4 sm:grid-cols-3">
             <div className="rounded-xl border border-border-subtle p-4">
               <div className="text-xs font-medium uppercase tracking-wide text-navy-500">Keywords</div>
@@ -229,6 +257,11 @@ export function KeywordFinder() {
               <div className={`mt-1 text-2xl font-semibold ${summary.keywordCount > 0 ? 'text-navy-900' : 'text-navy-300'}`}>{summary.keywordCount > 0 ? formatCurrency(summary.estimatedMonthlyBudget) : '—'}</div>
             </div>
           </div>
+          {summary.additionalBuildableKeywordsAvailable > 0 && (
+            <p className="mt-3 text-xs text-navy-500">
+              {summary.additionalBuildableKeywordsAvailable} more buildable keyword{summary.additionalBuildableKeywordsAvailable === 1 ? '' : 's'} available if your daily PPC budget is increased above {formatCurrency(maxDailyPpcBudget)}.
+            </p>
+          )}
         </Card>
 
         <Card title="Keyword Opportunities" subtitle="Click a column header to sort. This table will populate once Helium 10 data has been uploaded and analyzed.">
@@ -244,7 +277,7 @@ export function KeywordFinder() {
               {displayedResults.length === 0 && (
                 <tr><Td colSpan={SORT_HEADERS.length} className="text-navy-500">No keyword data uploaded yet. Upload a Helium 10 / Cerebro export above to get started.</Td></tr>
               )}
-              {displayedResults.map((r) => (
+              {pagedResults.map((r) => (
                 <Fragment key={r.normalizedKeyword}>
                   <tr onClick={() => toggleExpanded(r.normalizedKeyword)} className="cursor-pointer hover:bg-navy-900/[0.02]" title="Click for why this keyword was scored this way">
                     <Td className="max-w-[220px] truncate font-medium text-navy-900">{r.keyword}</Td>
@@ -265,7 +298,10 @@ export function KeywordFinder() {
                         : <span className="text-xs text-navy-400" title={r.bidUnavailableReason ?? undefined}>{compactBidReason(r)}</span>}
                     </Td>
                     <Td>{r.recommendedDailyBudget !== null ? formatCurrency(r.recommendedDailyBudget) : '—'}</Td>
-                    <Td><Badge tone={ACTION_TONE[r.action]}>{r.action}</Badge></Td>
+                    <Td>
+                      <Badge tone={ACTION_TONE[r.action]}>{r.action}</Badge>
+                      {selectedKeywordSet.has(r.normalizedKeyword) && <div className="mt-0.5 text-[10px] font-medium text-brand-700">✓ In Campaign</div>}
+                    </Td>
                   </tr>
                   {expanded.has(r.normalizedKeyword) && (
                     <tr>
@@ -280,6 +316,30 @@ export function KeywordFinder() {
               ))}
             </tbody>
           </Table>
+          {displayedResults.length > OPPORTUNITIES_PAGE_SIZE && (
+            <div className="mt-3 flex flex-wrap items-center justify-between gap-2 border-t border-border-subtle pt-3">
+              <span className="text-xs text-navy-500">
+                Showing {pageStart + 1}–{Math.min(pageStart + OPPORTUNITIES_PAGE_SIZE, displayedResults.length)} of {formatNumber(displayedResults.length)} keywords
+              </span>
+              <div className="flex items-center gap-2">
+                <button
+                  onClick={() => setPage((p) => Math.max(0, p - 1))}
+                  disabled={clampedPage === 0}
+                  className="rounded-lg border border-border-subtle px-3 py-1 text-xs font-medium text-navy-700 hover:bg-navy-900/5 disabled:cursor-not-allowed disabled:opacity-40"
+                >
+                  Previous
+                </button>
+                <span className="text-xs text-navy-500">Page {clampedPage + 1} of {totalPages}</span>
+                <button
+                  onClick={() => setPage((p) => Math.min(totalPages - 1, p + 1))}
+                  disabled={clampedPage >= totalPages - 1}
+                  className="rounded-lg border border-border-subtle px-3 py-1 text-xs font-medium text-navy-700 hover:bg-navy-900/5 disabled:cursor-not-allowed disabled:opacity-40"
+                >
+                  Next
+                </button>
+              </div>
+            </div>
+          )}
           <div className="mt-4 flex flex-wrap items-center gap-2">
             <span className="text-xs font-medium uppercase tracking-wide text-navy-500">Actions:</span>
             <Badge tone="positive">LAUNCH</Badge>
@@ -293,7 +353,7 @@ export function KeywordFinder() {
         {blueprint.length > 0 && (
           <Card
             title="Campaign Blueprint"
-            subtitle="A build sheet to follow manually in Seller Central. Only buildable keywords (definite product + calculated safe bid) appear here. Zaphira never publishes anything to Amazon automatically."
+            subtitle={`A build sheet to follow manually in Seller Central. Only the selected shortlist above — the keywords that fit inside your ${formatCurrency(maxDailyPpcBudget)}/day account PPC budget — appears here. Zaphira never publishes anything to Amazon automatically.`}
             actions={<button onClick={exportBlueprintCsv} className="rounded-lg border border-border-subtle px-3 py-1.5 text-xs font-medium text-navy-700 hover:bg-navy-900/5">Download Blueprint CSV</button>}
           >
             <Table>
