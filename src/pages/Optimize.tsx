@@ -10,6 +10,7 @@ import { formatCurrency, formatMatchType, formatPercent } from '../lib/engine/me
 import { DELIVERY_LABEL } from '../lib/engine/delivery';
 import { SIMPLE_ACTION_LABEL, SIMPLE_RISK_LABEL, simpleActionTone, simpleRiskTone, type SimpleAction } from '../lib/engine/simplifiedAction';
 import { computeDataFreshness, formatPeriodEndDate } from '../lib/engine/dataFreshness';
+import { GlobalContextBar } from '../components/layout/GlobalContextBar';
 import type { DecisionAction } from '../types';
 
 const ACTION_FILTERS: { value: SimpleAction | 'all'; label: string }[] = [
@@ -62,6 +63,7 @@ export function Optimize() {
     <div>
       <PageHeader title="Optimize" subtitle="What exactly should I change? Recommendation-only — Zaphira never changes Amazon campaigns automatically." />
       <div className="p-8">
+        <GlobalContextBar />
         {isStale && freshness && (
           <div className="mb-4 rounded-xl border border-negative-600/20 bg-negative-50 px-4 py-3 text-sm text-negative-700">
             <span className="font-semibold">Based on stale data</span> — data through {formatPeriodEndDate(freshness.periodEnd)} ({freshness.daysOld} days old). This is what the last upload showed, not necessarily what to do today. Upload new reports on the Upload Data page before making changes.

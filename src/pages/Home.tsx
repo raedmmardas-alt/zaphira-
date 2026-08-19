@@ -9,6 +9,7 @@ import { buildProductPerformanceRows } from '../lib/engine/ppcPerformanceSeries'
 import { SIMPLE_ACTION_LABEL, SIMPLE_RISK_LABEL, simpleActionTone } from '../lib/engine/simplifiedAction';
 import { deriveBudgetGuidance, deriveOverallStatus, deriveProductOverviewStatus, overallStatusLabel, overallStatusTone, productOverviewStatusTone } from '../lib/engine/homeRollups';
 import { computeDataFreshness, formatPeriodEndDate, freshnessStatusTone, FRESHNESS_STATUS_LABEL } from '../lib/engine/dataFreshness';
+import { GlobalContextBar } from '../components/layout/GlobalContextBar';
 
 export function Home() {
   const { ws, campaignDecisions, rankedActions, nextDollar } = useDecisionActions();
@@ -43,6 +44,7 @@ export function Home() {
       </div>
 
       <div className="space-y-6 p-8">
+        <GlobalContextBar />
         {/* KPIs */}
         <div className="grid grid-cols-2 gap-4 md:grid-cols-3 lg:grid-cols-6">
           <KpiCard label="Sales" value={formatCurrency(ws.kpis.attributedSales)} />

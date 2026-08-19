@@ -15,6 +15,7 @@ import {
 } from '../lib/engine/keywordIntelligence';
 import { downloadCsv } from '../lib/export/csv';
 import { nextSortState, sortKeywordResultsForDisplay, type SortColumn, type SortDirection } from '../lib/engine/keywordSorting';
+import { GlobalContextBar } from '../components/layout/GlobalContextBar';
 import { MAX_HELIUM_SOURCES } from '../types/helium';
 import type { KeywordAction, KeywordIntelligenceResult } from '../types/helium';
 
@@ -178,6 +179,7 @@ export function KeywordFinder() {
     <div>
       <PageHeader title="Find New Keywords" subtitle="Upload Helium 10 / Cerebro keyword data and let Zaphira analyze the best opportunities." />
       <div className="space-y-6 p-8">
+        <GlobalContextBar />
         <Card title="Upload Helium 10 CSV / XLSX" subtitle="Upload 1-4 competitor/source files — Zaphira merges and deduplicates them automatically.">
           {heliumSources.length === 0 ? (
             <div className="flex flex-col items-center justify-center rounded-2xl border border-dashed border-border-subtle px-6 py-10 text-center">

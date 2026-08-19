@@ -8,6 +8,7 @@ import { CheckIcon } from '../components/ui/Icons';
 import { REPORT_LABELS } from '../components/ReportCoverage';
 import { useAppStore } from '../state/store';
 import { useWorkspace } from '../state/useWorkspace';
+import { GlobalContextBar } from '../components/layout/GlobalContextBar';
 import type { ReportType } from '../types';
 
 // Display order the seller sees, independent of any internal ordering
@@ -189,6 +190,7 @@ export function UploadData() {
     <div>
       <PageHeader title="Update Your Data" subtitle="Files stay on this device. Nothing is uploaded to a remote server." />
       <div className="space-y-6 p-8">
+        <GlobalContextBar />
         <ReportingPeriodBar />
 
         <Card>
