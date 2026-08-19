@@ -638,6 +638,23 @@ export interface VariantIntelligenceResult {
 // Settings
 // ---------------------------------------------------------------------------
 
+// The single canonical list of marketplaces the app actually supports —
+// both the legacy Dashboard's Country/Currency selectors (DashboardTopBars)
+// and the compact GlobalContextBar's Marketplace dropdown read from this
+// same list, so there is exactly one place that defines "which marketplaces
+// exist" rather than two independently-hardcoded option lists that could
+// drift apart. Only US/USD exists today; adding a marketplace means adding
+// one entry here, not building a second marketplace system.
+export interface MarketplaceOption {
+  country: string;
+  label: string;
+  currency: string;
+}
+
+export const SUPPORTED_MARKETPLACES: MarketplaceOption[] = [
+  { country: 'US', label: 'United States', currency: 'USD' },
+];
+
 export type StrategyPosture = 'MAINTENANCE' | 'GROWTH' | 'AGGRESSIVE_GROWTH';
 
 export interface DeliveryThresholds {
