@@ -8,6 +8,7 @@ import { formatCurrency, formatMatchType, formatNumber, formatPercent } from '..
 import { buildProductPerformanceRows } from '../lib/engine/ppcPerformanceSeries';
 import { SIMPLE_ACTION_LABEL, SIMPLE_RISK_LABEL, simpleActionTone } from '../lib/engine/simplifiedAction';
 import { deriveBudgetGuidance, deriveOverallStatus, deriveProductOverviewStatus, overallStatusLabel, overallStatusTone, productOverviewStatusTone } from '../lib/engine/homeRollups';
+import { computeDataFreshness, formatPeriodEndDate, freshnessStatusTone, FRESHNESS_STATUS_LABEL } from '../lib/engine/dataFreshness';
 
 export function Home() {
   const { ws, campaignDecisions, rankedActions, nextDollar } = useDecisionActions();
@@ -18,6 +19,7 @@ export function Home() {
   const budget = deriveBudgetGuidance(campaignDecisions, nextDollar, settings.maxDailyPpcBudget);
   const productRows = buildProductPerformanceRows(ws.campaigns, products);
   const todayActions = rankedActions.slice(0, 6);
+  const freshness = ws.currentPeriod ? computeDataFreshness(ws.currentPeriod.end) : null;
 
   return (
     <div>
@@ -26,6 +28,12 @@ export function Home() {
           <div>
             <h1 className="text-2xl font-semibold tracking-tight text-navy-900">Zaphira PPC Control</h1>
             <p className="mt-1 text-sm text-navy-500">Your Amazon advertising command center</p>
+            {freshness && (
+              <div className="mt-1.5 flex items-center gap-2 text-xs text-navy-500">
+                <span>Data through {formatPeriodEndDate(freshness.periodEnd)}</span>
+                <Badge tone={freshnessStatusTone(freshness.status)}>{FRESHNESS_STATUS_LABEL[freshness.status]}</Badge>
+              </div>
+            )}
           </div>
           <div className="flex items-center gap-2 rounded-2xl border border-border-subtle bg-canvas px-4 py-2.5">
             <span className="text-xs font-medium uppercase tracking-wide text-navy-500">Overall status</span>

@@ -121,4 +121,22 @@ describe('Helium keyword source persistence (browser-only IndexedDB model)', () 
     await expect(useAppStore.getState().addHeliumKeywordFile({} as File)).rejects.toThrow(/Maximum 4/);
     expect(useAppStore.getState().heliumSources).toHaveLength(4);
   });
+
+  it('clearHeliumSources removes every loaded source from both state and persisted storage', async () => {
+    const { useAppStore } = await import('./store');
+    const { localDb, DB_KEYS } = await import('../lib/storage/db');
+    const sources = [sampleSource('s1', 'a.csv', 'k1'), sampleSource('s2', 'b.csv', 'k2'), sampleSource('s3', 'c.csv', 'k3')];
+    await localDb.set(DB_KEYS.heliumKeywordImport, sources);
+    await useAppStore.getState().hydrate();
+    expect(useAppStore.getState().heliumSources).toHaveLength(3);
+
+    useAppStore.getState().clearHeliumSources();
+
+    expect(useAppStore.getState().heliumSources).toEqual([]);
+    expect(await localDb.get(DB_KEYS.heliumKeywordImport)).toEqual([]);
+
+    // Simulated reload: cleared state must stay cleared, not resurrect stale data.
+    await useAppStore.getState().hydrate();
+    expect(useAppStore.getState().heliumSources).toEqual([]);
+  });
 });

@@ -89,6 +89,11 @@ export interface KeywordIntelligenceResult {
   normalizedKeyword: string;
   productId: string | null;
   productName: string | null;
+  // True only when exactly one Zaphira product's aliases matched — never
+  // true for a generic term (matches none specifically) or an ambiguous one
+  // (matches more than one). Economics/bid calculations only ever run
+  // against a definite product; buildable-campaign membership requires it.
+  isProductDefinite: boolean;
   isGenericRelevance: boolean;
   isCompetitorBrand: boolean;
   searchVolume: number | null;
@@ -104,6 +109,11 @@ export interface KeywordIntelligenceResult {
   maxSafeBid: number | null;
   recommendedDailyBudget: number | null;
   action: KeywordAction;
+  // Short, user-friendly reason a bid/budget is unavailable — "Product
+  // assignment needed" or "Confirm <Product> economics to calculate a safe
+  // bid" — null once a safe bid has actually been calculated. Never a bare,
+  // unexplained "—".
+  bidUnavailableReason: string | null;
   explanation: string;
 }
 

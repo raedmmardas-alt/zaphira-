@@ -680,10 +680,10 @@ export const DEFAULT_SETTINGS: Settings = {
 };
 
 export const DEFAULT_PRODUCTS: Product[] = [
-  { id: 'rose', name: 'Rose', asin: 'B0GZVBBRZP', sku: '', sellingPrice: 19.99, aliases: ['rose'], campaignAliases: [], adGroupAliases: [] },
-  { id: 'coconut', name: 'Coconut', asin: 'B0GZVGXXS2', sku: '', sellingPrice: 19.99, aliases: ['coconut'], campaignAliases: [], adGroupAliases: [] },
-  { id: 'mango', name: 'Mango', asin: 'B0GZVP9HRB', sku: '', sellingPrice: 19.99, aliases: ['mango'], campaignAliases: [], adGroupAliases: [] },
-  { id: 'vanilla', name: 'Vanilla', asin: 'B0H28WG6BB', sku: '', sellingPrice: 19.99, aliases: ['vanilla'], campaignAliases: [], adGroupAliases: [] },
+  { id: 'rose', name: 'Rose', asin: 'B0GZVBBRZP', sku: 'ZAP-ROSE-2026', sellingPrice: 19.99, aliases: ['rose'], campaignAliases: [], adGroupAliases: [] },
+  { id: 'coconut', name: 'Coconut', asin: 'B0GZVGXXS2', sku: 'ZAP-COCO-2026', sellingPrice: 19.99, aliases: ['coconut'], campaignAliases: [], adGroupAliases: [] },
+  { id: 'mango', name: 'Mango', asin: 'B0GZVP9HRB', sku: 'ZAP-MANGO-2026', sellingPrice: 19.99, aliases: ['mango'], campaignAliases: [], adGroupAliases: [] },
+  { id: 'vanilla', name: 'Vanilla', asin: 'B0H28WG6BB', sku: 'ZAP-Vanilla-2026', sellingPrice: 19.99, aliases: ['vanilla'], campaignAliases: [], adGroupAliases: [] },
 ];
 
 // Amazon Fees are deliberately NOT seeded here (null + unconfirmed) — they

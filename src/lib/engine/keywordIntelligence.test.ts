@@ -5,7 +5,7 @@ import type { HeliumKeywordAggregate } from '../../types/helium';
 import {
   analyzeHeliumKeyword, analyzeHeliumKeywords, matchProductRelevance, detectCompetitorBrand, findZaphiraHistory,
   resolveBreakEvenCpa, resolveAssumedCvr, computeMaxSafeBid, computeRecommendedBid,
-  buildKeywordCampaignSummary, buildKeywordBlueprint, sortKeywordResults,
+  buildKeywordCampaignSummary, buildKeywordBlueprint, sortKeywordResults, isBuildableKeyword, computeBidUnavailableReason,
 } from './keywordIntelligence';
 import type { KeywordIntelligenceContext } from './keywordIntelligence';
 
@@ -425,5 +425,169 @@ describe('sortKeywordResults', () => {
     const avoidIdx = actions.indexOf('AVOID');
     expect(launchIdx).toBeLessThan(watchIdx);
     expect(watchIdx).toBeLessThan(avoidIdx);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Buildable-keyword / campaign-consistency (V1 finalization)
+// ---------------------------------------------------------------------------
+
+describe('computeBidUnavailableReason', () => {
+  it('says a product assignment is needed before mentioning economics at all, when the product is not definite', () => {
+    expect(computeBidUnavailableReason({ isProductDefinite: false, productName: 'Coconut', maxSafeBid: null })).toBe('Product assignment needed');
+    // Even if a maxSafeBid happened to be present, an indefinite product is still the blocking reason.
+    expect(computeBidUnavailableReason({ isProductDefinite: false, productName: null, maxSafeBid: 0.5 })).toBe('Product assignment needed');
+  });
+
+  it('names the specific product once assignment is definite but economics are not confirmed', () => {
+    expect(computeBidUnavailableReason({ isProductDefinite: true, productName: 'Coconut', maxSafeBid: null })).toBe('Confirm Coconut economics to calculate a safe bid');
+  });
+
+  it('returns null once a safe bid has actually been calculated', () => {
+    expect(computeBidUnavailableReason({ isProductDefinite: true, productName: 'Coconut', maxSafeBid: 0.7 })).toBeNull();
+  });
+});
+
+describe('isProductDefinite / ambiguous-product economics never arbitrarily assigned', () => {
+  it('an ambiguous keyword (matches multiple products) never gets a bid from an arbitrarily-picked product', () => {
+    // A product whose alias also appears inside another product's alias would
+    // make a keyword match both — simulate that directly via two products
+    // sharing overlapping aliases through the context's product list.
+    const products = [
+      { id: 'coconut', name: 'Coconut', asin: 'A', sku: '', sellingPrice: 19.99, aliases: ['coconut'], campaignAliases: [], adGroupAliases: [] },
+      { id: 'coconutmilk', name: 'CoconutMilk', asin: 'B', sku: '', sellingPrice: 19.99, aliases: ['coconut milk'], campaignAliases: [], adGroupAliases: [] },
+    ];
+    const ctx = baseContext({
+      products,
+      productManualEconomics: {
+        coconut: { productId: 'coconut', cogs: 2.91, amazonFees: 3.00, amazonFeesConfirmed: true, sellerFundedDiscount: 0, targetProfitPerOrder: 3, updatedAt: '' },
+        coconutmilk: { productId: 'coconutmilk', cogs: 2.91, amazonFees: 3.00, amazonFeesConfirmed: true, sellerFundedDiscount: 0, targetProfitPerOrder: 3, updatedAt: '' },
+      },
+    });
+    const agg = baseAggregate({ keyword: 'coconut milk body butter', normalizedKeyword: 'coconut milk body butter' });
+    const r = analyzeHeliumKeyword(agg, ctx, 0.05);
+    // Both products matched (ambiguous) — even though both have complete,
+    // confirmed economics, the keyword must not silently borrow one of them.
+    expect(r.isProductDefinite).toBe(false);
+    expect(r.maxSafeBid).toBeNull();
+    expect(r.recommendedBid).toBeNull();
+    expect(r.bidUnavailableReason).toBe('Product assignment needed');
+  });
+
+  it('a generic keyword (matches no product specifically) is also never assigned economics', () => {
+    const r = analyzeHeliumKeyword(baseAggregate({ keyword: 'whipped body butter', normalizedKeyword: 'whipped body butter' }), baseContext(), 0.05);
+    expect(r.isProductDefinite).toBe(false);
+    expect(r.productId).toBeNull();
+    expect(r.maxSafeBid).toBeNull();
+    expect(r.bidUnavailableReason).toBe('Product assignment needed');
+  });
+
+  it('a scent-specific keyword with exactly one product match is definite and gets real economics', () => {
+    const r = analyzeHeliumKeyword(baseAggregate(), baseContext(), 0.05); // "coconut body butter"
+    expect(r.isProductDefinite).toBe(true);
+    expect(r.productId).toBe('coconut');
+    expect(r.maxSafeBid).not.toBeNull();
+    expect(r.bidUnavailableReason).toBeNull();
+  });
+});
+
+describe('isBuildableKeyword — the single source of truth for "ready to build"', () => {
+  it('requires LAUNCH/TEST action, a definite product, and real, non-null bid economics — all at once', () => {
+    const buildable = analyzeHeliumKeyword(baseAggregate(), baseContext(), 0.05);
+    expect(buildable.action === 'LAUNCH' || buildable.action === 'TEST').toBe(true);
+    expect(isBuildableKeyword(buildable)).toBe(true);
+  });
+
+  it('excludes an ambiguous-product keyword even if its action somehow reads LAUNCH/TEST', () => {
+    const ambiguousButActionable = {
+      ...analyzeHeliumKeyword(baseAggregate(), baseContext(), 0.05),
+      isProductDefinite: false, maxSafeBid: null, recommendedBid: null, recommendedDailyBudget: null,
+    };
+    expect(isBuildableKeyword(ambiguousButActionable)).toBe(false);
+  });
+
+  it('excludes a WATCH or AVOID keyword even when it has a definite product and real economics', () => {
+    const watchWithEconomics = { ...analyzeHeliumKeyword(baseAggregate(), baseContext(), 0.05), action: 'WATCH' as const };
+    expect(isBuildableKeyword(watchWithEconomics)).toBe(false);
+    const avoidWithEconomics = { ...analyzeHeliumKeyword(baseAggregate(), baseContext(), 0.05), action: 'AVOID' as const };
+    expect(isBuildableKeyword(avoidWithEconomics)).toBe(false);
+  });
+
+  it('excludes a keyword with a definite product but no confirmed economics (never fabricates a bid to make it buildable)', () => {
+    // No manual economics confirmed and no Sellerboard data -> maxSafeBid null.
+    const ctx = baseContext({ productManualEconomics: {} });
+    const r = analyzeHeliumKeyword(baseAggregate(), ctx, 0.05);
+    expect(r.isProductDefinite).toBe(true);
+    expect(r.maxSafeBid).toBeNull();
+    expect(isBuildableKeyword(r)).toBe(false);
+  });
+});
+
+describe('Campaign summary/blueprint consistency — the exact "161 keywords / $0.00 daily budget" regression', () => {
+  it('never counts a keyword toward Recommended Campaign KEYWORDS unless it is actually buildable, so the count and the budget can never contradict each other', () => {
+    // Reproduces the real bug: many generic/ambiguous keywords with no
+    // confirmed economics can still read action=TEST purely from opportunity
+    // score (see classifyKeywordAction's !maxSafeBidAvailable branch) —
+    // before this fix those all counted toward keywordCount while
+    // contributing $0 to the budget.
+    const ctx = baseContext({ productManualEconomics: {} }); // nothing confirmed anywhere
+    // Strong Helium evidence (high volume, many competitors, top rank, low
+    // competition) is exactly what pushes opportunity score >= 60 and
+    // action to TEST via classifyKeywordAction's !maxSafeBidAvailable
+    // branch, purely from evidence — with zero economics involved. This
+    // is the real shape of the historical bug.
+    const manyGenericAggregates = Array.from({ length: 161 }, (_, i) =>
+      baseAggregate({
+        keyword: `body butter variant ${i}`, normalizedKeyword: `body butter variant ${i}`, suggestedBid: null,
+        competitorCount: 5, bestOrganicRank: 1, bestSponsoredRank: 1, titleDensity: 0.5, competingProducts: 100, maxSearchVolume: 100000,
+      }),
+    );
+    const results = analyzeHeliumKeywords(manyGenericAggregates, ctx);
+    const testOrLaunchCount = results.filter((r) => r.action === 'LAUNCH' || r.action === 'TEST').length;
+    const summary = buildKeywordCampaignSummary(results);
+
+    // The bug scenario: action alone would have counted many of these.
+    expect(testOrLaunchCount).toBeGreaterThan(0);
+    // The fix: none of them have a definite product + real economics, so
+    // NONE are buildable — count and budget agree at zero, never
+    // "161 keywords / $0.00".
+    expect(summary.keywordCount).toBe(0);
+    expect(summary.recommendedDailyBudget).toBe(0);
+    expect(summary.estimatedMonthlyBudget).toBe(0);
+  });
+
+  it('a mix of buildable and non-buildable keywords: only the buildable ones count, and the daily budget is > 0', () => {
+    const ctxNoEconomics = baseContext({ productManualEconomics: {} });
+    const nonBuildable = analyzeHeliumKeyword(baseAggregate({ keyword: 'whipped body butter', normalizedKeyword: 'whipped body butter' }), ctxNoEconomics, 0.05);
+    const buildable = analyzeHeliumKeyword(baseAggregate(), baseContext(), 0.05); // full economics, definite product
+    const results = sortKeywordResults([nonBuildable, buildable]);
+
+    const summary = buildKeywordCampaignSummary(results);
+    expect(summary.keywordCount).toBe(1);
+    expect(summary.recommendedDailyBudget).toBeGreaterThan(0);
+    expect(summary.estimatedMonthlyBudget).toBeCloseTo(summary.recommendedDailyBudget * 30.4, 1);
+
+    const blueprint = buildKeywordBlueprint(results);
+    expect(blueprint).toHaveLength(1);
+    expect(blueprint[0].keyword).toBe(buildable.keyword);
+    // Never a blueprint row with missing bid economics.
+    for (const row of blueprint) {
+      expect(row.recommendedBid).not.toBeNull();
+      expect(row.maxSafeBid).not.toBeNull();
+      expect(row.recommendedDailyAllocation).not.toBeNull();
+    }
+  });
+
+  it('the campaign blueprint never contains a non-buildable row, even when many opportunities exist', () => {
+    const ctx = baseContext({ productManualEconomics: {} });
+    const results = analyzeHeliumKeywords(
+      [
+        baseAggregate({ keyword: 'body butter', normalizedKeyword: 'body butter' }), // generic, non-buildable
+        baseAggregate({ keyword: 'cetaphil moisturizer', normalizedKeyword: 'cetaphil moisturizer' }), // competitor brand, non-buildable
+      ],
+      ctx,
+    );
+    const blueprint = buildKeywordBlueprint(results);
+    expect(blueprint).toHaveLength(0);
   });
 });

@@ -14,30 +14,65 @@ import {
   analyzeHeliumKeywords, buildKeywordBlueprint, buildKeywordCampaignSummary, sortKeywordResults,
 } from '../lib/engine/keywordIntelligence';
 import { downloadCsv } from '../lib/export/csv';
+import { nextSortState, sortKeywordResultsForDisplay, type SortColumn, type SortDirection } from '../lib/engine/keywordSorting';
 import { MAX_HELIUM_SOURCES } from '../types/helium';
-import type { KeywordAction } from '../types/helium';
+import type { KeywordAction, KeywordIntelligenceResult } from '../types/helium';
 
 // UI shell for the Helium 10 / Cerebro keyword intelligence system. Layout
 // is approved and unchanged — this file only connects real parsing,
-// analysis, scoring, bid recommendations, and campaign-budget
-// recommendations to it.
-const FUTURE_COLUMNS = [
-  'Keyword', 'Search Volume', 'Competitor Strength', 'Zaphira PPC History', 'Opportunity Score',
-  'Risk', 'Recommended Match Type', 'Recommended Bid', 'Maximum Safe Bid', 'Recommended Daily Budget', 'Action',
-];
-
+// analysis, scoring, bid recommendations, campaign-budget recommendations,
+// and column sorting to it.
 const ACTION_TONE: Record<KeywordAction, BadgeTone> = { LAUNCH: 'positive', TEST: 'brand', WATCH: 'watch', AVOID: 'negative' };
 const RISK_TONE: Record<string, BadgeTone> = { LOW: 'positive', MEDIUM: 'watch', HIGH: 'negative', EXTREME: 'negative' };
+
+const SORT_HEADERS: { label: string; column: SortColumn }[] = [
+  { label: 'Keyword', column: 'keyword' },
+  { label: 'Search Volume', column: 'searchVolume' },
+  { label: 'Competitor Strength', column: 'competitorStrength' },
+  { label: 'Zaphira PPC History', column: 'zaphiraHistory' },
+  { label: 'Opportunity Score', column: 'opportunityScore' },
+  { label: 'Risk', column: 'risk' },
+  { label: 'Recommended Match Type', column: 'matchType' },
+  { label: 'Recommended Bid', column: 'recommendedBid' },
+  { label: 'Maximum Safe Bid', column: 'maxSafeBid' },
+  { label: 'Recommended Daily Budget', column: 'recommendedDailyBudget' },
+  { label: 'Action', column: 'action' },
+];
+
+function SortableTh({ label, column, sortColumn, sortDirection, onSort }: {
+  label: string; column: SortColumn; sortColumn: SortColumn | null; sortDirection: SortDirection; onSort: (c: SortColumn) => void;
+}) {
+  const active = sortColumn === column;
+  const icon = !active ? '↕' : sortDirection === 'asc' ? '↑' : '↓';
+  return (
+    <Th>
+      <button onClick={() => onSort(column)} className="flex items-center gap-1 whitespace-nowrap hover:text-navy-900">
+        <span>{label}</span>
+        <span className={active ? 'text-brand-700' : 'text-navy-300'}>{icon}</span>
+      </button>
+    </Th>
+  );
+}
+
+// Short cell text for a missing bid — the full reason is always in the
+// title tooltip and in the "Why?" panel.
+function compactBidReason(r: KeywordIntelligenceResult): string | null {
+  if (r.bidUnavailableReason === null) return null;
+  return r.isProductDefinite ? 'Confirm economics' : 'Assign product';
+}
 
 export function KeywordFinder() {
   const inputRef = useRef<HTMLInputElement>(null);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [expanded, setExpanded] = useState<Set<string>>(new Set());
+  const [sortColumn, setSortColumn] = useState<SortColumn | null>(null);
+  const [sortDirection, setSortDirection] = useState<SortDirection>('asc');
 
   const heliumSources = useAppStore((s) => s.heliumSources);
   const addHeliumKeywordFile = useAppStore((s) => s.addHeliumKeywordFile);
   const removeHeliumKeywordSource = useAppStore((s) => s.removeHeliumKeywordSource);
+  const clearHeliumSources = useAppStore((s) => s.clearHeliumSources);
   const products = useAppStore((s) => s.products);
   const settings = useAppStore((s) => s.settings);
   const productManualEconomics = useAppStore((s) => s.productManualEconomics);
@@ -58,6 +93,22 @@ export function KeywordFinder() {
     }
   }
 
+  function handleClearAll() {
+    if (confirm('Remove all loaded Helium 10 / Cerebro competitor files? This only removes data stored on this device.')) {
+      clearHeliumSources();
+      setExpanded(new Set());
+      setSortColumn(null);
+    }
+  }
+
+  function handleSort(column: SortColumn) {
+    const next = nextSortState({ column: sortColumn, direction: sortDirection }, column);
+    setSortColumn(next.column);
+    setSortDirection(next.direction);
+  }
+
+  // Kept as its own memo so a re-sort (below) never re-runs the intelligence
+  // engine — only heliumSources/products/economics changes recompute this.
   const results = useMemo(() => {
     const allRows = heliumSources.flatMap((s) => s.rows);
     if (allRows.length === 0) return [];
@@ -67,6 +118,8 @@ export function KeywordFinder() {
     });
     return sortKeywordResults(analyzed);
   }, [heliumSources, products, ws.targets, ws.searchTerms, ws.economicsById, productManualEconomics, settings]);
+
+  const displayedResults = useMemo(() => sortKeywordResultsForDisplay(results, sortColumn, sortDirection), [results, sortColumn, sortDirection]);
 
   const summary = useMemo(() => buildKeywordCampaignSummary(results), [results]);
   const blueprint = useMemo(() => buildKeywordBlueprint(results), [results]);
@@ -134,18 +187,21 @@ export function KeywordFinder() {
                 </div>
               ))}
 
-              <div className="pt-1">
-                {!atMax ? (
-                  <button
-                    onClick={() => inputRef.current?.click()}
-                    disabled={busy}
-                    className="text-xs font-medium text-brand-700 hover:underline disabled:opacity-50"
-                  >
-                    {busy ? 'Analyzing…' : '+ Add another file'}
-                  </button>
-                ) : (
-                  <p className="text-xs text-navy-500">Maximum 4 competitor files loaded.</p>
-                )}
+              <div className="flex flex-wrap items-center justify-between gap-3 pt-1">
+                <div>
+                  {!atMax ? (
+                    <button
+                      onClick={() => inputRef.current?.click()}
+                      disabled={busy}
+                      className="text-xs font-medium text-brand-700 hover:underline disabled:opacity-50"
+                    >
+                      {busy ? 'Analyzing…' : '+ Add another file'}
+                    </button>
+                  ) : (
+                    <p className="text-xs text-navy-500">Maximum 4 competitor files loaded.</p>
+                  )}
+                </div>
+                <button onClick={handleClearAll} className="text-xs font-medium text-negative-600 hover:underline">Clear Helium Data</button>
               </div>
               {results.length > 0 && (
                 <p className="text-xs text-navy-500">
@@ -158,7 +214,7 @@ export function KeywordFinder() {
           <input ref={inputRef} type="file" accept=".csv,.xlsx,.xls" className="hidden" onChange={onFile} />
         </Card>
 
-        <Card title="Recommended Campaign" subtitle="Only counts keywords classified LAUNCH or TEST below — an estimated planning maximum, not guaranteed spend.">
+        <Card title="Recommended Campaign" subtitle="Only counts buildable keywords: LAUNCH or TEST, a definite product, and a calculated safe bid. An estimated planning maximum, not guaranteed spend.">
           <div className="grid grid-cols-1 gap-4 sm:grid-cols-3">
             <div className="rounded-xl border border-border-subtle p-4">
               <div className="text-xs font-medium uppercase tracking-wide text-navy-500">Keywords</div>
@@ -175,16 +231,20 @@ export function KeywordFinder() {
           </div>
         </Card>
 
-        <Card title="Keyword Opportunities" subtitle="This table will populate once Helium 10 data has been uploaded and analyzed.">
+        <Card title="Keyword Opportunities" subtitle="Click a column header to sort. This table will populate once Helium 10 data has been uploaded and analyzed.">
           <Table>
             <thead>
-              <tr>{FUTURE_COLUMNS.map((c) => <Th key={c}>{c}</Th>)}</tr>
+              <tr>
+                {SORT_HEADERS.map((h) => (
+                  <SortableTh key={h.column} label={h.label} column={h.column} sortColumn={sortColumn} sortDirection={sortDirection} onSort={handleSort} />
+                ))}
+              </tr>
             </thead>
             <tbody>
-              {results.length === 0 && (
-                <tr><Td colSpan={FUTURE_COLUMNS.length} className="text-navy-500">No keyword data uploaded yet. Upload a Helium 10 / Cerebro export above to get started.</Td></tr>
+              {displayedResults.length === 0 && (
+                <tr><Td colSpan={SORT_HEADERS.length} className="text-navy-500">No keyword data uploaded yet. Upload a Helium 10 / Cerebro export above to get started.</Td></tr>
               )}
-              {results.map((r) => (
+              {displayedResults.map((r) => (
                 <Fragment key={r.normalizedKeyword}>
                   <tr onClick={() => toggleExpanded(r.normalizedKeyword)} className="cursor-pointer hover:bg-navy-900/[0.02]" title="Click for why this keyword was scored this way">
                     <Td className="max-w-[220px] truncate font-medium text-navy-900">{r.keyword}</Td>
@@ -194,16 +254,24 @@ export function KeywordFinder() {
                     <Td>{r.opportunityScore}</Td>
                     <Td><Badge tone={RISK_TONE[r.risk]}>{r.risk}</Badge></Td>
                     <Td className="text-xs">{r.recommendedMatchType}</Td>
-                    <Td>{r.recommendedBid !== null ? formatCurrency(r.recommendedBid) : '—'}</Td>
-                    <Td>{r.maxSafeBid !== null ? formatCurrency(r.maxSafeBid) : '—'}</Td>
+                    <Td>
+                      {r.recommendedBid !== null
+                        ? formatCurrency(r.recommendedBid)
+                        : <span className="text-xs text-navy-400" title={r.bidUnavailableReason ?? undefined}>{compactBidReason(r)}</span>}
+                    </Td>
+                    <Td>
+                      {r.maxSafeBid !== null
+                        ? formatCurrency(r.maxSafeBid)
+                        : <span className="text-xs text-navy-400" title={r.bidUnavailableReason ?? undefined}>{compactBidReason(r)}</span>}
+                    </Td>
                     <Td>{r.recommendedDailyBudget !== null ? formatCurrency(r.recommendedDailyBudget) : '—'}</Td>
                     <Td><Badge tone={ACTION_TONE[r.action]}>{r.action}</Badge></Td>
                   </tr>
                   {expanded.has(r.normalizedKeyword) && (
                     <tr>
-                      <Td colSpan={FUTURE_COLUMNS.length} className="bg-navy-900/[0.02] text-xs text-navy-600">
+                      <Td colSpan={SORT_HEADERS.length} className="bg-navy-900/[0.02] text-xs text-navy-600">
                         <span className="font-medium text-navy-500">Why? </span>{r.explanation}
-                        {r.productName && <span className="ml-2 text-navy-400">Product: {r.productName}</span>}
+                        {r.productName && <span className="ml-2 text-navy-400">Product: {r.productName}{!r.isProductDefinite ? ' (needs confirmation)' : ''}</span>}
                         <span className="ml-2 text-navy-400">Confidence: {r.confidence}</span>
                       </Td>
                     </tr>
@@ -225,7 +293,7 @@ export function KeywordFinder() {
         {blueprint.length > 0 && (
           <Card
             title="Campaign Blueprint"
-            subtitle="A build sheet to follow manually in Seller Central. Zaphira never publishes anything to Amazon automatically."
+            subtitle="A build sheet to follow manually in Seller Central. Only buildable keywords (definite product + calculated safe bid) appear here. Zaphira never publishes anything to Amazon automatically."
             actions={<button onClick={exportBlueprintCsv} className="rounded-lg border border-border-subtle px-3 py-1.5 text-xs font-medium text-navy-700 hover:bg-navy-900/5">Download Blueprint CSV</button>}
           >
             <Table>

@@ -74,6 +74,7 @@ interface AppState {
   updateProductManualEconomics: (productId: string, partial: Partial<ProductManualEconomicsInputs>) => void;
   addHeliumKeywordFile: (file: File) => Promise<HeliumImportMeta>;
   removeHeliumKeywordSource: (sourceId: string) => void;
+  clearHeliumSources: () => void;
   resetAllData: () => Promise<void>;
 }
 
@@ -328,6 +329,11 @@ export const useAppStore = create<AppState>((set, get) => ({
     const next = get().heliumSources.filter((s) => s.meta.id !== sourceId);
     set({ heliumSources: next });
     void localDb.set(DB_KEYS.heliumKeywordImport, next);
+  },
+
+  clearHeliumSources: () => {
+    set({ heliumSources: [] });
+    void localDb.set(DB_KEYS.heliumKeywordImport, []);
   },
 
   resetAllData: async () => {

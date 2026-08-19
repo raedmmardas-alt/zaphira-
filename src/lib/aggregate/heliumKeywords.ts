@@ -3,8 +3,22 @@
 // competitor evidence instead of creating duplicate rows.
 import type { HeliumKeywordAggregate, HeliumRawKeywordRow } from '../../types/helium';
 
+// Normalizes for comparison/deduplication only — the original readable text
+// is always preserved separately for display. Handles the punctuation
+// variations real Cerebro exports actually contain (smart quotes, en/em
+// dashes, trailing punctuation) without altering meaningful characters like
+// internal hyphens or slashes, so two genuinely different keywords are
+// never accidentally merged.
 export function normalizeKeywordText(raw: string): string {
-  return raw.toLowerCase().trim().replace(/\s+/g, ' ');
+  return raw
+    .toLowerCase()
+    .normalize('NFKC')
+    .replace(/[‘’′`´]/g, "'") // smart quotes/primes/backtick/acute -> straight apostrophe
+    .replace(/[–—−]/g, '-') // en dash/em dash/minus sign -> hyphen
+    .trim()
+    .replace(/\s+/g, ' ')
+    .replace(/[.,;:!?]+$/g, '') // trailing punctuation
+    .trim();
 }
 
 function median(values: number[]): number | null {
@@ -30,20 +44,21 @@ export function aggregateHeliumKeywords(rows: HeliumRawKeywordRow[]): HeliumKeyw
 
   const result: HeliumKeywordAggregate[] = [];
   for (const [normalizedKeyword, groupRows] of groups) {
-    // Distinct competitor ASINs, so an accidental duplicate row for the same
-    // ASIN is never double-counted. When the export has no ASIN column at
-    // all, we can't distinguish sources — treat the keyword as having at
-    // least one competitor context rather than zero.
-    const asinSet = new Set(groupRows.map((r) => r.competitorAsin).filter((a): a is string => !!a));
-    const competitorAsins = Array.from(asinSet);
-    const competitorCount = competitorAsins.length > 0 ? competitorAsins.length : (groupRows.length > 0 ? 1 : 0);
-
-    // Distinct uploaded source files this keyword appeared in — the
-    // strongest cross-competitor-file corroboration signal. Every row
+    // Distinct uploaded source files this keyword appeared in — every row
     // always has a real sourceId (stamped by the parser at upload time), so
     // this is never fabricated: with one file loaded it is always exactly 1
     // for every keyword.
     const sourceIds = Array.from(new Set(groupRows.map((r) => r.sourceId)));
+
+    // Distinct competitor ASINs, so an accidental duplicate row for the same
+    // ASIN is never double-counted. When the export has no ASIN column at
+    // all, we can't distinguish competitors within a file — fall back to
+    // treating each uploaded source file as one distinct competitor, per
+    // spec, rather than collapsing every ASIN-less file down to a flat 1
+    // regardless of how many separate files actually contained the keyword.
+    const asinSet = new Set(groupRows.map((r) => r.competitorAsin).filter((a): a is string => !!a));
+    const competitorAsins = Array.from(asinSet);
+    const competitorCount = competitorAsins.length > 0 ? competitorAsins.length : sourceIds.length;
 
     const organicRanks = nonNull(groupRows.map((r) => r.organicRank));
     const sponsoredRanks = nonNull(groupRows.map((r) => r.sponsoredRank));

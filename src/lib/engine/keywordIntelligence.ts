@@ -438,6 +438,16 @@ function capitalizeFirst(s: string): string {
   return s.length > 0 ? s.charAt(0).toUpperCase() + s.slice(1) : s;
 }
 
+// User-friendly reason a safe bid isn't available yet — shown in place of
+// an unexplained "—" wherever practical. Product assignment is checked
+// first: a keyword can't get a safe bid from another product's economics
+// just because a definite product hasn't been determined yet.
+export function computeBidUnavailableReason(params: { isProductDefinite: boolean; productName: string | null; maxSafeBid: number | null }): string | null {
+  if (!params.isProductDefinite) return 'Product assignment needed';
+  if (params.maxSafeBid === null) return `Confirm ${params.productName} economics to calculate a safe bid`;
+  return null;
+}
+
 export function buildKeywordExplanation(params: {
   productName: string | null;
   isGeneric: boolean;
@@ -450,6 +460,7 @@ export function buildKeywordExplanation(params: {
   recommendedBid: number | null;
   maxSafeBid: number | null;
   matchType: KeywordMatchType;
+  bidUnavailableReason: string | null;
 }): string {
   const parts: string[] = [relevanceLabel(params)];
   if (params.searchVolume !== null) parts.push(`${params.searchVolume.toLocaleString()} monthly searches`);
@@ -457,8 +468,8 @@ export function buildKeywordExplanation(params: {
   parts.push(params.history.label.toLowerCase());
   if (params.recommendedBid !== null && params.maxSafeBid !== null) {
     parts.push(`suggested ${formatCurrency(params.recommendedBid)} ${params.matchType.toLowerCase()} bid stays below the ${formatCurrency(params.maxSafeBid)} safe ceiling`);
-  } else {
-    parts.push('no product economics available yet — bid guardrail unavailable');
+  } else if (params.bidUnavailableReason) {
+    parts.push(params.bidUnavailableReason.toLowerCase());
   }
   return capitalizeFirst(parts.join('. ')) + '.';
 }
@@ -478,10 +489,19 @@ export interface KeywordIntelligenceContext {
 
 export function analyzeHeliumKeyword(agg: HeliumKeywordAggregate, ctx: KeywordIntelligenceContext, assumedCvr: number): KeywordIntelligenceResult {
   const relevance = matchProductRelevance(agg.normalizedKeyword, ctx.products);
+  // A product is "definite" only when relevance matched exactly one
+  // product's aliases. An ambiguous match (multiple products) still carries
+  // a "led by X" productId for display/explanation purposes, but must never
+  // be used to pull that product's economics — that would be exactly the
+  // "arbitrarily assigned" bid the spec forbids for a still-ambiguous
+  // keyword. A generic term already has productId === null from
+  // matchProductRelevance, so this guard is a no-op for that case.
+  const isProductDefinite = relevance.productId !== null && !relevance.isAmbiguous;
+  const economicsProductId = isProductDefinite ? relevance.productId : null;
   const isCompetitorBrand = detectCompetitorBrand(agg.normalizedKeyword);
   const history = findZaphiraHistory(agg.normalizedKeyword, ctx.targets, ctx.searchTerms);
 
-  const breakEvenCpa = resolveBreakEvenCpa(relevance.productId, ctx.products, ctx.economicsById, ctx.productManualEconomics);
+  const breakEvenCpa = resolveBreakEvenCpa(economicsProductId, ctx.products, ctx.economicsById, ctx.productManualEconomics);
   const maxSafeBid = computeMaxSafeBid(breakEvenCpa, assumedCvr);
 
   const risk = computeKeywordRisk({
@@ -498,7 +518,7 @@ export function analyzeHeliumKeyword(agg: HeliumKeywordAggregate, ctx: KeywordIn
 
   const matchType = recommendMatchType({ relevanceScore: relevance.relevanceScore, risk, history });
 
-  const product = relevance.productId ? ctx.products.find((p) => p.id === relevance.productId) ?? null : null;
+  const product = economicsProductId ? ctx.products.find((p) => p.id === economicsProductId) ?? null : null;
   const targetAcosCeiling = product?.sellingPrice ? product.sellingPrice * ctx.settings.targetAcosDefault * assumedCvr : null;
   const recommendedBid = computeRecommendedBid({ maxSafeBid, heliumSuggestedBid: agg.suggestedBid, risk, matchType, targetAcosCeiling });
 
@@ -532,6 +552,8 @@ export function analyzeHeliumKeyword(agg: HeliumKeywordAggregate, ctx: KeywordIn
     ? 'No competitor data'
     : `${agg.competitorCount} competitor${agg.competitorCount === 1 ? '' : 's'} ranking${agg.sourceCount > 1 ? ` across ${agg.sourceCount} sources` : ''}${agg.bestOrganicRank !== null ? `, best rank #${agg.bestOrganicRank}` : ''}`;
 
+  const bidUnavailableReason = computeBidUnavailableReason({ isProductDefinite, productName: relevance.productName, maxSafeBid });
+
   const explanation = buildKeywordExplanation({
     productName: relevance.productName,
     isGeneric: relevance.isGeneric,
@@ -544,6 +566,7 @@ export function analyzeHeliumKeyword(agg: HeliumKeywordAggregate, ctx: KeywordIn
     recommendedBid,
     maxSafeBid,
     matchType,
+    bidUnavailableReason,
   });
 
   return {
@@ -551,6 +574,7 @@ export function analyzeHeliumKeyword(agg: HeliumKeywordAggregate, ctx: KeywordIn
     normalizedKeyword: agg.normalizedKeyword,
     productId: relevance.productId,
     productName: relevance.productName,
+    isProductDefinite,
     isGenericRelevance: relevance.isGeneric,
     isCompetitorBrand,
     searchVolume: agg.maxSearchVolume,
@@ -566,6 +590,7 @@ export function analyzeHeliumKeyword(agg: HeliumKeywordAggregate, ctx: KeywordIn
     maxSafeBid,
     recommendedDailyBudget,
     action,
+    bidUnavailableReason,
     explanation,
   };
 }
@@ -581,11 +606,35 @@ export function sortKeywordResults(results: KeywordIntelligenceResult[]): Keywor
   return [...results].sort((a, b) => ACTION_ORDER[a.action] - ACTION_ORDER[b.action] || b.opportunityScore - a.opportunityScore);
 }
 
+// A keyword only counts toward "ready to build" (the Recommended Campaign
+// summary and the Campaign Blueprint) when EVERY one of these is true:
+// LAUNCH/TEST action, a definite (non-ambiguous, non-generic) product, and
+// real, non-null bid economics. This is the fix for the "161 keywords /
+// $0.00 daily budget" contradiction: previously TEST could be reached
+// purely from opportunity score even with no product/economics resolved,
+// which inflated the visible keyword count while contributing nothing to
+// the budget total. Those keywords still show up in Keyword Opportunities
+// (with a clear reason why they aren't buildable yet) — they just never
+// count here.
+export function isBuildableKeyword(r: KeywordIntelligenceResult): boolean {
+  return (
+    (r.action === 'LAUNCH' || r.action === 'TEST') &&
+    r.isProductDefinite &&
+    r.recommendedBid !== null &&
+    r.maxSafeBid !== null &&
+    r.recommendedDailyBudget !== null
+  );
+}
+
 export function buildKeywordCampaignSummary(results: KeywordIntelligenceResult[]): KeywordCampaignSummary {
-  const selected = results.filter((r) => r.action === 'LAUNCH' || r.action === 'TEST');
-  const recommendedDailyBudget = round2(selected.reduce((a, r) => a + (r.recommendedDailyBudget ?? 0), 0));
+  const buildable = results.filter(isBuildableKeyword);
+  // Sum of each keyword's own already-guardrailed allocation (itself capped
+  // at a quarter of the account daily budget) — never simply totaling
+  // unrealistic per-keyword maximums, and never exceeding what each
+  // keyword's own economics/risk already bounded.
+  const recommendedDailyBudget = round2(buildable.reduce((a, r) => a + (r.recommendedDailyBudget ?? 0), 0));
   return {
-    keywordCount: selected.length,
+    keywordCount: buildable.length,
     recommendedDailyBudget,
     estimatedMonthlyBudget: round2(recommendedDailyBudget * 30.4),
   };
@@ -593,12 +642,10 @@ export function buildKeywordCampaignSummary(results: KeywordIntelligenceResult[]
 
 export function buildKeywordBlueprint(results: KeywordIntelligenceResult[]): KeywordBlueprintRow[] {
   return results
-    .filter((r) => r.action === 'LAUNCH' || r.action === 'TEST')
+    .filter(isBuildableKeyword)
     .map((r) => ({
-      productName: r.productName ?? 'Unassigned — pick a product ad group manually',
-      campaignName: r.productName
-        ? `ZAP-${r.productName}-KeywordIntel-${r.recommendedMatchType === 'EXACT' ? 'Exact' : 'Phrase'}`
-        : 'ZAP-KeywordIntel-Unassigned',
+      productName: r.productName!,
+      campaignName: `ZAP-${r.productName}-KeywordIntel-${r.recommendedMatchType === 'EXACT' ? 'Exact' : 'Phrase'}`,
       keyword: r.keyword,
       matchType: r.recommendedMatchType,
       recommendedBid: r.recommendedBid,

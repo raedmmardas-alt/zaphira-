@@ -9,6 +9,7 @@ import { useAppStore } from '../state/store';
 import { formatCurrency, formatMatchType, formatPercent } from '../lib/engine/metrics';
 import { DELIVERY_LABEL } from '../lib/engine/delivery';
 import { SIMPLE_ACTION_LABEL, SIMPLE_RISK_LABEL, simpleActionTone, simpleRiskTone, type SimpleAction } from '../lib/engine/simplifiedAction';
+import { computeDataFreshness, formatPeriodEndDate } from '../lib/engine/dataFreshness';
 import type { DecisionAction } from '../types';
 
 const ACTION_FILTERS: { value: SimpleAction | 'all'; label: string }[] = [
@@ -26,12 +27,20 @@ function bidCell(a: DecisionAction): string {
 }
 
 export function Optimize() {
-  const { targetDecisions } = useDecisionActions();
+  const { ws, targetDecisions } = useDecisionActions();
   const products = useAppStore((s) => s.products);
   const [searchParams, setSearchParams] = useSearchParams();
   const productFilter = searchParams.get('product') ?? 'all';
   const [actionFilter, setActionFilter] = useState<SimpleAction | 'all'>('all');
   const [expanded, setExpanded] = useState<Set<string>>(new Set());
+
+  // Freshness is a guardrail around presentation/action confidence only —
+  // it never changes which action was computed, never deletes any
+  // historical HOLD/WATCH information, and only kicks in at 4+ days old
+  // (STALE). 2-3 day data still shows with full confidence here; that
+  // softer warning lives on Home.
+  const freshness = ws.currentPeriod ? computeDataFreshness(ws.currentPeriod.end) : null;
+  const isStale = freshness?.status === 'STALE';
 
   const filtered = useMemo(() => {
     return targetDecisions.filter((a) => {
@@ -53,6 +62,11 @@ export function Optimize() {
     <div>
       <PageHeader title="Optimize" subtitle="What exactly should I change? Recommendation-only — Zaphira never changes Amazon campaigns automatically." />
       <div className="p-8">
+        {isStale && freshness && (
+          <div className="mb-4 rounded-xl border border-negative-600/20 bg-negative-50 px-4 py-3 text-sm text-negative-700">
+            <span className="font-semibold">Based on stale data</span> — data through {formatPeriodEndDate(freshness.periodEnd)} ({freshness.daysOld} days old). This is what the last upload showed, not necessarily what to do today. Upload new reports on the Upload Data page before making changes.
+          </div>
+        )}
         <Card>
           <div className="mb-4 flex flex-wrap items-center gap-3">
             <select
@@ -85,7 +99,7 @@ export function Optimize() {
               )}
               {filtered.map((a) => (
                 <Fragment key={a.key}>
-                  <tr>
+                  <tr className={isStale ? 'opacity-60' : undefined}>
                     <Td className="font-medium text-navy-900">{a.productName ?? <span className="text-negative-600">Unmapped</span>}</Td>
                     <Td className="max-w-[220px] truncate font-medium text-navy-900">{a.targetingText}</Td>
                     <Td className="text-xs">{formatMatchType(a.matchType)}</Td>
@@ -93,7 +107,10 @@ export function Optimize() {
                     <Td className="font-medium text-navy-900">{bidCell(a)}</Td>
                     <Td className="max-w-[280px] truncate text-xs text-navy-600" title={a.reason}>{a.reason}</Td>
                     <Td><Badge tone={simpleRiskTone(a.risk.classification)}>{SIMPLE_RISK_LABEL[a.risk.classification]}</Badge></Td>
-                    <Td><Badge tone={simpleActionTone(a.action)}>{SIMPLE_ACTION_LABEL[a.action]}</Badge></Td>
+                    <Td>
+                      <Badge tone={isStale ? 'neutral' : simpleActionTone(a.action)}>{SIMPLE_ACTION_LABEL[a.action]}</Badge>
+                      {isStale && <div className="mt-0.5 text-[10px] text-navy-500">Based on stale data</div>}
+                    </Td>
                     <Td>
                       <button onClick={() => toggleExpanded(a.key)} className="text-xs font-medium text-brand-700 hover:underline">
                         {expanded.has(a.key) ? 'Hide' : 'Why?'}
