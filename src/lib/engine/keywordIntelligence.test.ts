@@ -33,7 +33,8 @@ function baseContext(overrides: Partial<KeywordIntelligenceContext> = {}): Keywo
 function baseAggregate(overrides: Partial<HeliumKeywordAggregate> = {}): HeliumKeywordAggregate {
   return {
     keyword: 'coconut body butter', normalizedKeyword: 'coconut body butter', competitorCount: 3,
-    competitorAsins: ['A', 'B', 'C'], bestOrganicRank: 8, bestSponsoredRank: 4, medianOrganicRank: 10,
+    competitorAsins: ['A', 'B', 'C'], sourceCount: 1, sourceIds: ['source-1'],
+    bestOrganicRank: 8, bestSponsoredRank: 4, medianOrganicRank: 10,
     maxSearchVolume: 1672, titleDensity: 3, competingProducts: 800, suggestedBid: 0.90, searchVolumeTrend: null,
     ...overrides,
   };
@@ -307,6 +308,29 @@ describe('analyzeHeliumKeyword — full scenarios', () => {
       analyzeHeliumKeyword(baseAggregate({ keyword: 'cetaphil cream', normalizedKeyword: 'cetaphil cream' }), baseContext(), 0.05),
     ];
     for (const r of results) expect(r.recommendedMatchType).not.toBe('BROAD' as never);
+  });
+});
+
+describe('analyzeHeliumKeyword — multi-source (competitor file) overlap', () => {
+  it('still analyzes normally with only 1 source file, and never fabricates cross-source evidence that does not exist', () => {
+    const r = analyzeHeliumKeyword(baseAggregate({ sourceCount: 1, sourceIds: ['source-1'] }), baseContext(), 0.05);
+    expect(r.sourceCount).toBe(1);
+    expect(Number.isFinite(r.opportunityScore)).toBe(true);
+    expect(r.competitorStrengthLabel).not.toContain('sources'); // singular-source wording never claims plural corroboration
+  });
+
+  it('gives a keyword confirmed across multiple source files a lower risk / higher confidence than the same evidence from one file', () => {
+    const oneSource = analyzeHeliumKeyword(baseAggregate({ sourceCount: 1, sourceIds: ['source-1'] }), baseContext(), 0.05);
+    const fourSources = analyzeHeliumKeyword(baseAggregate({ sourceCount: 4, sourceIds: ['source-1', 'source-2', 'source-3', 'source-4'] }), baseContext(), 0.05);
+    expect(fourSources.opportunityScore).toBeGreaterThanOrEqual(oneSource.opportunityScore);
+    expect(fourSources.competitorStrengthLabel).toContain('across 4 sources');
+  });
+
+  it('a keyword appearing in only one of several loaded sources is scored on real evidence only, never boosted as if it appeared in all of them', () => {
+    const partial = analyzeHeliumKeyword(baseAggregate({ sourceCount: 1, sourceIds: ['source-2'] }), baseContext(), 0.05);
+    const confirmedEverywhere = analyzeHeliumKeyword(baseAggregate({ sourceCount: 4, sourceIds: ['source-1', 'source-2', 'source-3', 'source-4'] }), baseContext(), 0.05);
+    expect(partial.sourceCount).toBe(1);
+    expect(partial.opportunityScore).toBeLessThanOrEqual(confirmedEverywhere.opportunityScore);
   });
 });
 

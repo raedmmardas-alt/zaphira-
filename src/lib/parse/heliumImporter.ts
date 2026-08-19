@@ -106,6 +106,7 @@ export function importHeliumKeywordFile(file: { name: string; size: number }, ra
       keywordSales: map.keywordSales ? toNullableNumber(r[map.keywordSales]) : null,
       searchVolumeTrend: map.searchVolumeTrend ? toNullableNumber(r[map.searchVolumeTrend]) : null,
       competitorAsin: map.competitorAsin ? (String(r[map.competitorAsin] ?? '').trim() || null) : null,
+      sourceId: baseMeta.id,
     });
   }
 

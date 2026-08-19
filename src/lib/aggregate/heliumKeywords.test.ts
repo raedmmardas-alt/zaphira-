@@ -6,7 +6,7 @@ function row(overrides: Partial<HeliumRawKeywordRow>): HeliumRawKeywordRow {
   return {
     keyword: 'coconut body butter', searchVolume: null, organicRank: null, sponsoredRank: null,
     competingProducts: null, titleDensity: null, cerebroIqScore: null, cpr: null, suggestedBid: null,
-    keywordSales: null, searchVolumeTrend: null, competitorAsin: null,
+    keywordSales: null, searchVolumeTrend: null, competitorAsin: null, sourceId: 'source-1',
     ...overrides,
   };
 }
@@ -80,5 +80,52 @@ describe('aggregateHeliumKeywords — deduplication across multiple competitors'
     const aggregates = aggregateHeliumKeywords(rows);
     expect(aggregates).toHaveLength(1);
     expect(aggregates[0].normalizedKeyword).toBe('rose body butter');
+  });
+});
+
+describe('aggregateHeliumKeywords — multi-source (competitor file) overlap', () => {
+  it('is always exactly 1 source when only one file is loaded — never fabricated as more', () => {
+    const rows: HeliumRawKeywordRow[] = [
+      row({ keyword: 'coconut body butter', competitorAsin: 'A', sourceId: 'source-1' }),
+      row({ keyword: 'coconut body butter', competitorAsin: 'B', sourceId: 'source-1' }),
+    ];
+    const aggregates = aggregateHeliumKeywords(rows);
+    expect(aggregates[0].sourceCount).toBe(1);
+    expect(aggregates[0].sourceIds).toEqual(['source-1']);
+    expect(aggregates[0].competitorCount).toBe(2); // still 2 distinct ASINs within that one file
+  });
+
+  it('counts distinct source files a keyword appears in across multiple uploads, deduplicating rows within a source', () => {
+    const rows: HeliumRawKeywordRow[] = [
+      row({ keyword: 'coconut body butter', competitorAsin: 'A', sourceId: 'source-1' }),
+      row({ keyword: 'coconut body butter', competitorAsin: 'A', sourceId: 'source-1' }), // duplicate within source 1
+      row({ keyword: 'coconut body butter', competitorAsin: 'C', sourceId: 'source-2' }),
+      row({ keyword: 'coconut body butter', competitorAsin: 'D', sourceId: 'source-3' }),
+    ];
+    const aggregates = aggregateHeliumKeywords(rows);
+    expect(aggregates[0].sourceCount).toBe(3);
+    expect(aggregates[0].sourceIds.sort()).toEqual(['source-1', 'source-2', 'source-3']);
+  });
+
+  it('merges and deduplicates keywords found in different source files into one aggregate', () => {
+    const rows: HeliumRawKeywordRow[] = [
+      row({ keyword: 'Coconut Body Butter', competitorAsin: 'A', sourceId: 'source-1', searchVolume: 1600 }),
+      row({ keyword: 'coconut body butter', competitorAsin: 'B', sourceId: 'source-2', searchVolume: 1700 }),
+    ];
+    const aggregates = aggregateHeliumKeywords(rows);
+    expect(aggregates).toHaveLength(1);
+    expect(aggregates[0].maxSearchVolume).toBe(1700);
+    expect(aggregates[0].sourceCount).toBe(2);
+  });
+
+  it('a keyword only found in one of several loaded sources still has real, non-fabricated evidence for that one source', () => {
+    const rows: HeliumRawKeywordRow[] = [
+      row({ keyword: 'coconut body butter', sourceId: 'source-1' }),
+      row({ keyword: 'rose body butter', sourceId: 'source-2' }), // only in source 2
+    ];
+    const aggregates = aggregateHeliumKeywords(rows);
+    const rose = aggregates.find((a) => a.normalizedKeyword === 'rose body butter')!;
+    expect(rose.sourceCount).toBe(1);
+    expect(rose.sourceIds).toEqual(['source-2']);
   });
 });

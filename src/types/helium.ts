@@ -18,7 +18,9 @@ export interface HeliumImportMeta {
 
 // One raw row = one keyword row as Helium 10 / Cerebro exported it. A
 // multi-ASIN Cerebro run produces one row per keyword per competitor ASIN,
-// so the same keyword text can legitimately appear many times.
+// so the same keyword text can legitimately appear many times. sourceId
+// identifies which uploaded file (1-4 competitor/source files) the row came
+// from — used to measure cross-source overlap, never fabricated.
 export interface HeliumRawKeywordRow {
   keyword: string; // original, human-readable text — never altered
   searchVolume: number | null;
@@ -32,15 +34,32 @@ export interface HeliumRawKeywordRow {
   keywordSales: number | null;
   searchVolumeTrend: number | null;
   competitorAsin: string | null;
+  sourceId: string;
 }
 
-// Deduplicated across every competitor row sharing the same normalized
-// keyword text — combined evidence, never duplicate rows.
+// One uploaded Helium 10 / Cerebro file. 1-4 of these can be loaded at
+// once; each is independently removable.
+export interface HeliumImportSource {
+  meta: HeliumImportMeta;
+  rows: HeliumRawKeywordRow[];
+}
+
+export const MAX_HELIUM_SOURCES = 4;
+
+// Deduplicated across every competitor row (from any loaded source file)
+// sharing the same normalized keyword text — combined evidence, never
+// duplicate rows.
 export interface HeliumKeywordAggregate {
   keyword: string; // first-seen original readable text, for display
   normalizedKeyword: string;
   competitorCount: number; // distinct competitor ASINs observed (or 1 if the export has no ASIN column at all but the keyword appears)
   competitorAsins: string[];
+  // How many distinct uploaded source files this keyword appeared in — the
+  // strongest form of competitor-overlap evidence, since it means
+  // independent competitor pulls agree the keyword matters. Always exactly
+  // 1 when only one file is loaded (never fabricated).
+  sourceCount: number;
+  sourceIds: string[];
   bestOrganicRank: number | null;
   bestSponsoredRank: number | null;
   medianOrganicRank: number | null;
@@ -74,6 +93,7 @@ export interface KeywordIntelligenceResult {
   isCompetitorBrand: boolean;
   searchVolume: number | null;
   competitorCount: number;
+  sourceCount: number;
   competitorStrengthLabel: string;
   zaphiraHistory: KeywordZaphiraHistory;
   opportunityScore: number; // 0-100

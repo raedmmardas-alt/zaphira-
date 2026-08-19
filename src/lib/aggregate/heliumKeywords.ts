@@ -38,6 +38,13 @@ export function aggregateHeliumKeywords(rows: HeliumRawKeywordRow[]): HeliumKeyw
     const competitorAsins = Array.from(asinSet);
     const competitorCount = competitorAsins.length > 0 ? competitorAsins.length : (groupRows.length > 0 ? 1 : 0);
 
+    // Distinct uploaded source files this keyword appeared in — the
+    // strongest cross-competitor-file corroboration signal. Every row
+    // always has a real sourceId (stamped by the parser at upload time), so
+    // this is never fabricated: with one file loaded it is always exactly 1
+    // for every keyword.
+    const sourceIds = Array.from(new Set(groupRows.map((r) => r.sourceId)));
+
     const organicRanks = nonNull(groupRows.map((r) => r.organicRank));
     const sponsoredRanks = nonNull(groupRows.map((r) => r.sponsoredRank));
     const searchVolumes = nonNull(groupRows.map((r) => r.searchVolume));
@@ -51,6 +58,8 @@ export function aggregateHeliumKeywords(rows: HeliumRawKeywordRow[]): HeliumKeyw
       normalizedKeyword,
       competitorCount,
       competitorAsins,
+      sourceCount: sourceIds.length,
+      sourceIds,
       bestOrganicRank: organicRanks.length > 0 ? Math.min(...organicRanks) : null,
       bestSponsoredRank: sponsoredRanks.length > 0 ? Math.min(...sponsoredRanks) : null,
       medianOrganicRank: median(organicRanks),

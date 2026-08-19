@@ -5,7 +5,8 @@ import type {
   SellerboardKeywordRow, SellerboardProductRow, TargetingRow,
 } from '../types';
 import { DEFAULT_PRODUCTS, DEFAULT_PRODUCT_MANUAL_ECONOMICS, DEFAULT_SETTINGS, blankManualEconomics } from '../types';
-import type { HeliumImportMeta, HeliumRawKeywordRow } from '../types/helium';
+import type { HeliumImportMeta, HeliumImportSource } from '../types/helium';
+import { MAX_HELIUM_SOURCES } from '../types/helium';
 import { DB_KEYS, localDb } from '../lib/storage/db';
 import { parseUploadedFile } from '../lib/parse/fileParser';
 import {
@@ -33,15 +34,6 @@ interface PersistedImport {
   rows: unknown[];
 }
 
-// Persisted entirely separately from the Amazon/Sellerboard reportMeta/
-// reportRows machinery (and its ReportType union) below — Helium keyword
-// data never feeds reconciliation, the period engine, or report-quality
-// status, so it deliberately isn't threaded through that shared pipeline.
-export interface HeliumImportState {
-  meta: HeliumImportMeta;
-  rows: HeliumRawKeywordRow[];
-}
-
 interface AppState {
   hydrated: boolean;
   settings: Settings;
@@ -54,7 +46,12 @@ interface AppState {
   deliveryWorkflow: Record<string, DeliveryWorkflowEntry>;
   manualKeywordHistory: { keyword: string; productId: string | null }[];
   productManualEconomics: Record<string, ProductManualEconomicsInputs>;
-  heliumImport: HeliumImportState | null;
+  // 1-4 Helium 10 / Cerebro competitor/source files, persisted separately
+  // from the Amazon/Sellerboard reportMeta/reportRows machinery (and its
+  // ReportType union) below — Helium keyword data never feeds
+  // reconciliation, the period engine, or report-quality status, so it
+  // deliberately isn't threaded through that shared pipeline.
+  heliumSources: HeliumImportSource[];
 
   hydrate: () => Promise<void>;
   updateSettings: (partial: Partial<Settings>) => void;
@@ -75,8 +72,8 @@ interface AppState {
   setDeliveryWorkflowStatus: (targetKey: string, status: DeliveryWorkflowStatus, currentPeriod: DateRange | null) => void;
   addManualKeyword: (keyword: string, productId: string | null) => void;
   updateProductManualEconomics: (productId: string, partial: Partial<ProductManualEconomicsInputs>) => void;
-  importHeliumKeywordFile: (file: File) => Promise<HeliumImportMeta>;
-  deleteHeliumKeywordImport: () => void;
+  addHeliumKeywordFile: (file: File) => Promise<HeliumImportMeta>;
+  removeHeliumKeywordSource: (sourceId: string) => void;
   resetAllData: () => Promise<void>;
 }
 
@@ -119,10 +116,10 @@ export const useAppStore = create<AppState>((set, get) => ({
   deliveryWorkflow: {},
   manualKeywordHistory: [],
   productManualEconomics: DEFAULT_PRODUCT_MANUAL_ECONOMICS,
-  heliumImport: null,
+  heliumSources: [],
 
   hydrate: async () => {
-    const [settings, products, mappings, reports, anp, shadows, deliveryWf, manualKw, manualEcon, heliumImport] = await Promise.all([
+    const [settings, products, mappings, reports, anp, shadows, deliveryWf, manualKw, manualEcon, heliumSources] = await Promise.all([
       localDb.get<Settings>(DB_KEYS.settings),
       localDb.get<Product[]>(DB_KEYS.products),
       localDb.get<SavedAdGroupMapping[]>(DB_KEYS.savedAdGroupMappings),
@@ -132,7 +129,7 @@ export const useAppStore = create<AppState>((set, get) => ({
       localDb.get<Record<string, DeliveryWorkflowEntry>>(DB_KEYS.deliveryWorkflow),
       localDb.get<{ keyword: string; productId: string | null }[]>(DB_KEYS.manualKeywordHistory),
       localDb.get<Record<string, ProductManualEconomicsInputs>>(DB_KEYS.productManualEconomics),
-      localDb.get<HeliumImportState>(DB_KEYS.heliumKeywordImport),
+      localDb.get<HeliumImportSource[]>(DB_KEYS.heliumKeywordImport),
     ]);
 
     const reportMeta: AppState['reportMeta'] = {};
@@ -161,7 +158,10 @@ export const useAppStore = create<AppState>((set, get) => ({
       deliveryWorkflow: deliveryWf ?? {},
       manualKeywordHistory: manualKw ?? [],
       productManualEconomics: resolvedManualEconomics,
-      heliumImport: heliumImport ?? null,
+      // Defensive: a valid persisted value is always an array; anything
+      // else (e.g. leftover data from an earlier single-source shape) is
+      // treated as no sources loaded, never guessed at or partially reused.
+      heliumSources: Array.isArray(heliumSources) ? heliumSources : [],
     });
     void localDb.set(DB_KEYS.productManualEconomics, resolvedManualEconomics);
   },
@@ -308,18 +308,26 @@ export const useAppStore = create<AppState>((set, get) => ({
     void localDb.set(DB_KEYS.productManualEconomics, next);
   },
 
-  importHeliumKeywordFile: async (file) => {
+  addHeliumKeywordFile: async (file) => {
+    // Enforced here too (not just by hiding the "Add another file" control
+    // in the UI once 4 are loaded) so the 1-4 limit holds regardless of
+    // caller.
+    if (get().heliumSources.length >= MAX_HELIUM_SOURCES) {
+      throw new Error(`Maximum ${MAX_HELIUM_SOURCES} competitor files loaded.`);
+    }
     const raw = await parseUploadedFile(file);
     const { meta, rows } = parseHeliumKeywordFile({ name: file.name, size: file.size }, raw);
-    const next: HeliumImportState = { meta, rows };
-    set({ heliumImport: next });
+    const nextSource: HeliumImportSource = { meta, rows };
+    const next = [...get().heliumSources, nextSource];
+    set({ heliumSources: next });
     await localDb.set(DB_KEYS.heliumKeywordImport, next);
     return meta;
   },
 
-  deleteHeliumKeywordImport: () => {
-    set({ heliumImport: null });
-    void localDb.del(DB_KEYS.heliumKeywordImport);
+  removeHeliumKeywordSource: (sourceId) => {
+    const next = get().heliumSources.filter((s) => s.meta.id !== sourceId);
+    set({ heliumSources: next });
+    void localDb.set(DB_KEYS.heliumKeywordImport, next);
   },
 
   resetAllData: async () => {
@@ -335,7 +343,7 @@ export const useAppStore = create<AppState>((set, get) => ({
       deliveryWorkflow: {},
       manualKeywordHistory: [],
       productManualEconomics: DEFAULT_PRODUCT_MANUAL_ECONOMICS,
-      heliumImport: null,
+      heliumSources: [],
     });
   },
 }));

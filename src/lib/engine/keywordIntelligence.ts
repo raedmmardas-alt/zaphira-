@@ -201,6 +201,11 @@ export function computeKeywordRisk(params: {
   heliumSuggestedBid: number | null;
   history: KeywordZaphiraHistory;
   competitorCount: number;
+  // Distinct uploaded source files (1-4) this keyword was seen in —
+  // independent competitor pulls agreeing on a keyword is corroborating
+  // evidence, so it's allowed to reduce risk slightly, the same way strong
+  // single-file competitor counts already do.
+  sourceCount: number;
 }): KeywordRisk {
   let score = 0;
   if (params.relevanceScore < 0.3) score += 3;
@@ -215,6 +220,7 @@ export function computeKeywordRisk(params: {
   if (params.history.spend > 5 && params.history.orders === 0) score += 3;
   if (params.competitorCount === 0) score += 1;
   if (params.competitorCount >= 3) score -= 1;
+  if (params.sourceCount >= 2) score -= 1;
   if (params.history.isHistoricalWinner) score -= 2;
 
   if (score <= 0) return 'LOW';
@@ -280,11 +286,16 @@ function volumeScore(searchVolume: number | null): number {
   return clamp(Math.log10(searchVolume + 1) / 4, 0, 1);
 }
 
-function competitorEvidenceScore(competitorCount: number, bestOrganicRank: number | null, bestSponsoredRank: number | null): number {
+// sourceCount contributes a smaller, separate slice: the same competitor
+// count from one file is decent evidence, but the same keyword confirmed
+// across multiple independently-run competitor pulls is stronger — without
+// letting cross-source corroboration alone dominate the score.
+function competitorEvidenceScore(competitorCount: number, bestOrganicRank: number | null, bestSponsoredRank: number | null, sourceCount: number): number {
   const countScore = clamp(competitorCount / 5, 0, 1);
   const bestRank = bestOrganicRank ?? bestSponsoredRank;
   const rankScore = bestRank === null ? 0.3 : clamp(1 - (bestRank - 1) / 40, 0, 1);
-  return (countScore + rankScore) / 2;
+  const sourceCorroborationScore = clamp((sourceCount - 1) / 3, 0, 1);
+  return countScore * 0.4 + rankScore * 0.4 + sourceCorroborationScore * 0.2;
 }
 
 function competitionPenalty(titleDensity: number | null, competingProducts: number | null): number {
@@ -310,6 +321,7 @@ function economicsHeadroomScore(recommendedBid: number | null, maxSafeBid: numbe
 export function computeOpportunityScore(params: {
   searchVolume: number | null;
   competitorCount: number;
+  sourceCount: number;
   bestOrganicRank: number | null;
   bestSponsoredRank: number | null;
   relevanceScore: number;
@@ -321,7 +333,7 @@ export function computeOpportunityScore(params: {
 }): number {
   const raw =
     volumeScore(params.searchVolume) * 0.20 +
-    competitorEvidenceScore(params.competitorCount, params.bestOrganicRank, params.bestSponsoredRank) * 0.15 +
+    competitorEvidenceScore(params.competitorCount, params.bestOrganicRank, params.bestSponsoredRank, params.sourceCount) * 0.15 +
     params.relevanceScore * 0.25 +
     (1 - competitionPenalty(params.titleDensity, params.competingProducts)) * 0.15 +
     historyScore(params.history) * 0.15 +
@@ -337,6 +349,7 @@ export function computeOpportunityScore(params: {
 export function computeConfidence(params: {
   hasSearchVolume: boolean;
   competitorCount: number;
+  sourceCount: number;
   hasRankData: boolean;
   hasHistoryEvidence: boolean;
   hasEconomics: boolean;
@@ -344,11 +357,15 @@ export function computeConfidence(params: {
   let points = 0;
   if (params.hasSearchVolume) points++;
   if (params.competitorCount >= 2) points++;
+  // Corroboration across independent competitor/source files is extra
+  // confidence on top of within-file competitor count — never present with
+  // only one file loaded, since sourceCount is then always exactly 1.
+  if (params.sourceCount >= 2) points++;
   if (params.hasRankData) points++;
   if (params.hasHistoryEvidence) points++;
   if (params.hasEconomics) points++;
-  if (points >= 4) return 'HIGH';
-  if (points >= 2) return 'MEDIUM';
+  if (points >= 5) return 'HIGH';
+  if (points >= 3) return 'MEDIUM';
   return 'LOW';
 }
 
@@ -476,6 +493,7 @@ export function analyzeHeliumKeyword(agg: HeliumKeywordAggregate, ctx: KeywordIn
     heliumSuggestedBid: agg.suggestedBid,
     history,
     competitorCount: agg.competitorCount,
+    sourceCount: agg.sourceCount,
   });
 
   const matchType = recommendMatchType({ relevanceScore: relevance.relevanceScore, risk, history });
@@ -487,6 +505,7 @@ export function analyzeHeliumKeyword(agg: HeliumKeywordAggregate, ctx: KeywordIn
   const opportunityScore = computeOpportunityScore({
     searchVolume: agg.maxSearchVolume,
     competitorCount: agg.competitorCount,
+    sourceCount: agg.sourceCount,
     bestOrganicRank: agg.bestOrganicRank,
     bestSponsoredRank: agg.bestSponsoredRank,
     relevanceScore: relevance.relevanceScore,
@@ -500,6 +519,7 @@ export function analyzeHeliumKeyword(agg: HeliumKeywordAggregate, ctx: KeywordIn
   const confidence = computeConfidence({
     hasSearchVolume: agg.maxSearchVolume !== null,
     competitorCount: agg.competitorCount,
+    sourceCount: agg.sourceCount,
     hasRankData: agg.bestOrganicRank !== null || agg.bestSponsoredRank !== null,
     hasHistoryEvidence: history.clicks > 0 || history.orders > 0 || history.isExistingTarget,
     hasEconomics: maxSafeBid !== null,
@@ -510,7 +530,7 @@ export function analyzeHeliumKeyword(agg: HeliumKeywordAggregate, ctx: KeywordIn
 
   const competitorStrengthLabel = agg.competitorCount === 0
     ? 'No competitor data'
-    : `${agg.competitorCount} competitor${agg.competitorCount === 1 ? '' : 's'} ranking${agg.bestOrganicRank !== null ? `, best rank #${agg.bestOrganicRank}` : ''}`;
+    : `${agg.competitorCount} competitor${agg.competitorCount === 1 ? '' : 's'} ranking${agg.sourceCount > 1 ? ` across ${agg.sourceCount} sources` : ''}${agg.bestOrganicRank !== null ? `, best rank #${agg.bestOrganicRank}` : ''}`;
 
   const explanation = buildKeywordExplanation({
     productName: relevance.productName,
@@ -535,6 +555,7 @@ export function analyzeHeliumKeyword(agg: HeliumKeywordAggregate, ctx: KeywordIn
     isCompetitorBrand,
     searchVolume: agg.maxSearchVolume,
     competitorCount: agg.competitorCount,
+    sourceCount: agg.sourceCount,
     competitorStrengthLabel,
     zaphiraHistory: history,
     opportunityScore,
