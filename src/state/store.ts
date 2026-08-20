@@ -4,7 +4,7 @@ import type {
   Product, ProductManualEconomicsInputs, ReportImportMeta, ReportType, SavedAdGroupMapping, SearchTermRow, Settings, ShadowSnapshot,
   SellerboardKeywordRow, SellerboardProductRow, TargetingRow,
 } from '../types';
-import { DEFAULT_PRODUCTS, DEFAULT_PRODUCT_MANUAL_ECONOMICS, DEFAULT_SETTINGS, blankManualEconomics } from '../types';
+import { DEFAULT_PRODUCTS, DEFAULT_PRODUCT_MANUAL_ECONOMICS, DEFAULT_SETTINGS, SUPPORTED_MARKETPLACES, blankManualEconomics } from '../types';
 import type { HeliumImportMeta, HeliumImportSource } from '../types/helium';
 import { MAX_HELIUM_SOURCES } from '../types/helium';
 import { DB_KEYS, localDb } from '../lib/storage/db';
@@ -14,7 +14,7 @@ import {
   importSellerboardKeywordReport, importSellerboardProductReport, importTargetingReport,
 } from '../lib/parse/reportImporters';
 import { importHeliumKeywordFile as parseHeliumKeywordFile } from '../lib/parse/heliumImporter';
-import { periodKey } from '../lib/parse/periodEngine';
+import { deriveCurrentPeriod, periodKey } from '../lib/parse/periodEngine';
 
 export interface ReportRowsByType {
   campaign: CampaignRow[];
@@ -34,6 +34,59 @@ interface PersistedImport {
   rows: unknown[];
 }
 
+// One marketplace's saved report set, keyed by (marketplace, reporting
+// period). `reportMeta`/`reportRows` — the single "active" slot every page
+// already reads from via useWorkspace() — represent whichever
+// marketplace/period is currently being viewed; switching marketplace or
+// period swaps what's loaded into that slot from here, so deriveWorkspace.ts,
+// reconciliation, Home/Optimize/Keyword Finder/Advanced/Profit & Capital all
+// keep reading reportMeta/reportRows exactly as before with zero changes.
+// `period` is null only for an in-progress upload that hasn't produced a
+// confirmed period yet (a "draft") — never fabricated, and never lost: it
+// still gets its own snapshot so switching away and back never drops data.
+export interface ReportSnapshot {
+  id: string; // `${marketplace}__${periodKey}` or `${marketplace}__draft`
+  marketplace: string;
+  period: DateRange | null;
+  savedAt: string;
+  reportMeta: Partial<Record<ReportType, ReportImportMeta>>;
+  reportRows: ReportRowsByType;
+}
+
+// Upserts the CURRENT active reportMeta/reportRows into `snapshots` as one
+// marketplace-scoped, period-keyed entry. Called after every upload/delete/
+// period-confirmation so a snapshot always exists before the active slot
+// can ever be swapped out (marketplace switch, period switch, "start new
+// period") — this is what guarantees "uploading a new period never erases
+// an older one" and "replacing a report for the same period updates only
+// that period" (same period -> same id -> upsert, not append).
+function upsertActiveSnapshot(
+  snapshots: ReportSnapshot[],
+  marketplace: string,
+  reportMeta: Partial<Record<ReportType, ReportImportMeta>>,
+  reportRows: ReportRowsByType,
+): ReportSnapshot[] {
+  if (Object.keys(reportMeta).length === 0) return snapshots; // nothing to save
+  const period = deriveCurrentPeriod(reportMeta);
+  const id = period ? `${marketplace}__${periodKey(period)}` : `${marketplace}__draft`;
+  const snapshot: ReportSnapshot = { id, marketplace, period, savedAt: new Date().toISOString(), reportMeta, reportRows };
+  let next = snapshots.filter((s) => s.id !== id);
+  // Once a real period is confirmed, this marketplace's draft (if any) has
+  // "graduated" into the confirmed snapshot — drop the now-redundant draft
+  // rather than leaving a stale duplicate around.
+  if (period) next = next.filter((s) => s.id !== `${marketplace}__draft`);
+  next.push(snapshot);
+  return next;
+}
+
+// Which saved snapshot to load when switching into a marketplace with no
+// explicit period chosen — the most recently-covered confirmed period, or
+// (if only a draft exists) the draft itself.
+function pickMostRecentSnapshot(candidates: ReportSnapshot[]): ReportSnapshot | null {
+  if (candidates.length === 0) return null;
+  return [...candidates].sort((a, b) => (b.period?.start ?? b.savedAt).localeCompare(a.period?.start ?? a.savedAt))[0];
+}
+
 interface AppState {
   hydrated: boolean;
   settings: Settings;
@@ -41,6 +94,15 @@ interface AppState {
   savedAdGroupMappings: SavedAdGroupMapping[];
   reportMeta: Partial<Record<ReportType, ReportImportMeta>>;
   reportRows: ReportRowsByType;
+  // Every confirmed (and in-progress draft) report set for every
+  // marketplace — see ReportSnapshot. reportMeta/reportRows above always
+  // mirror exactly one entry here (or an empty/new draft not yet worth
+  // saving).
+  reportSnapshots: ReportSnapshot[];
+  // A view-only sub-range filter applied on top of whichever
+  // marketplace/period is active — see lib/aggregate/customRangeFilter.ts.
+  // Cleared automatically on any marketplace/period switch.
+  customDateRange: DateRange | null;
   accountNetProfitByPeriod: Record<string, AccountNetProfitEntry>;
   shadowSnapshots: ShadowSnapshot[];
   deliveryWorkflow: Record<string, DeliveryWorkflowEntry>;
@@ -63,6 +125,19 @@ interface AppState {
   importReportFile: (type: ReportType, file: File) => Promise<ReportImportMeta>;
   deleteReport: (type: ReportType) => void;
   confirmReportPeriod: (type: ReportType, period: DateRange) => void;
+  // Switches which marketplace's report data is active — saves whatever is
+  // currently loaded as a snapshot first (never loses in-progress work),
+  // then loads the target marketplace's most recently saved period (or an
+  // empty slate if that marketplace has no data yet).
+  setActiveMarketplace: (country: string) => void;
+  // Switches to a specific saved snapshot (by id) within the CURRENT
+  // marketplace — used by the Reporting Period history picker.
+  setActivePeriod: (id: string) => void;
+  // Saves the current active data as a snapshot (if it has anything in it),
+  // then clears the active slot so fresh uploads start a genuinely new
+  // reporting period instead of merging into whatever was already loaded.
+  startNewReportingPeriod: () => void;
+  setCustomDateRange: (range: DateRange | null) => void;
   setAccountNetProfit: (period: DateRange, value: number) => void;
   saveShadowSnapshot: (s: ShadowSnapshot) => void;
   saveShadowSnapshotBatch: (snapshots: ShadowSnapshot[]) => void;
@@ -112,6 +187,8 @@ export const useAppStore = create<AppState>((set, get) => ({
   savedAdGroupMappings: [],
   reportMeta: {},
   reportRows: EMPTY_ROWS,
+  reportSnapshots: [],
+  customDateRange: null,
   accountNetProfitByPeriod: {},
   shadowSnapshots: [],
   deliveryWorkflow: {},
@@ -120,7 +197,7 @@ export const useAppStore = create<AppState>((set, get) => ({
   heliumSources: [],
 
   hydrate: async () => {
-    const [settings, products, mappings, reports, anp, shadows, deliveryWf, manualKw, manualEcon, heliumSources] = await Promise.all([
+    const [settings, products, mappings, reports, anp, shadows, deliveryWf, manualKw, manualEcon, heliumSources, snapshotsPersisted, customRangePersisted] = await Promise.all([
       localDb.get<Settings>(DB_KEYS.settings),
       localDb.get<Product[]>(DB_KEYS.products),
       localDb.get<SavedAdGroupMapping[]>(DB_KEYS.savedAdGroupMappings),
@@ -131,6 +208,8 @@ export const useAppStore = create<AppState>((set, get) => ({
       localDb.get<{ keyword: string; productId: string | null }[]>(DB_KEYS.manualKeywordHistory),
       localDb.get<Record<string, ProductManualEconomicsInputs>>(DB_KEYS.productManualEconomics),
       localDb.get<HeliumImportSource[]>(DB_KEYS.heliumKeywordImport),
+      localDb.get<ReportSnapshot[]>(DB_KEYS.reportSnapshots),
+      localDb.get<DateRange | null>(DB_KEYS.customDateRange),
     ]);
 
     const reportMeta: AppState['reportMeta'] = {};
@@ -146,14 +225,31 @@ export const useAppStore = create<AppState>((set, get) => ({
 
     const resolvedProducts = products ?? DEFAULT_PRODUCTS;
     const resolvedManualEconomics = seedMissingManualEconomics(manualEcon ?? {}, resolvedProducts);
+    const resolvedSettings = settings ?? DEFAULT_SETTINGS;
+
+    // Migration: pre-marketplace installs have report data (reportMeta/
+    // reportRows) but no reportSnapshots at all. Back-fill it into the new
+    // history as a United States snapshot WITHOUT touching or clearing
+    // reportMeta/reportRows themselves — the active slot loads exactly as
+    // it always did, so existing users see zero change; it's now ALSO
+    // safely backed up into history. Runs at most once per install: after
+    // the first hydrate, reportSnapshots is always non-empty going forward
+    // (even an empty array is persisted the first time any snapshot action
+    // runs), so this never re-fires and overwrite newer history.
+    let resolvedSnapshots = Array.isArray(snapshotsPersisted) ? snapshotsPersisted : [];
+    if (resolvedSnapshots.length === 0 && Object.keys(reportMeta).length > 0) {
+      resolvedSnapshots = upsertActiveSnapshot([], resolvedSettings.country, reportMeta, reportRows);
+    }
 
     set({
       hydrated: true,
-      settings: settings ?? DEFAULT_SETTINGS,
+      settings: resolvedSettings,
       products: resolvedProducts,
       savedAdGroupMappings: mappings ?? [],
       reportMeta,
       reportRows,
+      reportSnapshots: resolvedSnapshots,
+      customDateRange: customRangePersisted ?? null,
       accountNetProfitByPeriod: anp ?? {},
       shadowSnapshots: shadows ?? [],
       deliveryWorkflow: deliveryWf ?? {},
@@ -165,6 +261,7 @@ export const useAppStore = create<AppState>((set, get) => ({
       heliumSources: Array.isArray(heliumSources) ? heliumSources : [],
     });
     void localDb.set(DB_KEYS.productManualEconomics, resolvedManualEconomics);
+    void localDb.set(DB_KEYS.reportSnapshots, resolvedSnapshots);
   },
 
   updateSettings: (partial) => {
@@ -220,8 +317,10 @@ export const useAppStore = create<AppState>((set, get) => ({
     }
     const nextMeta = { ...get().reportMeta, [type]: meta };
     const nextRows = { ...get().reportRows, [type]: rows } as ReportRowsByType;
-    set({ reportMeta: nextMeta, reportRows: nextRows });
+    const nextSnapshots = upsertActiveSnapshot(get().reportSnapshots, get().settings.country, nextMeta, nextRows);
+    set({ reportMeta: nextMeta, reportRows: nextRows, reportSnapshots: nextSnapshots });
     await persistReports(nextMeta, nextRows);
+    void localDb.set(DB_KEYS.reportSnapshots, nextSnapshots);
     return meta;
   },
 
@@ -229,16 +328,64 @@ export const useAppStore = create<AppState>((set, get) => ({
     const nextMeta = { ...get().reportMeta };
     delete nextMeta[type];
     const nextRows = { ...get().reportRows, [type]: [] } as ReportRowsByType;
-    set({ reportMeta: nextMeta, reportRows: nextRows });
+    const nextSnapshots = upsertActiveSnapshot(get().reportSnapshots, get().settings.country, nextMeta, nextRows);
+    set({ reportMeta: nextMeta, reportRows: nextRows, reportSnapshots: nextSnapshots });
     void persistReports(nextMeta, nextRows);
+    void localDb.set(DB_KEYS.reportSnapshots, nextSnapshots);
   },
 
   confirmReportPeriod: (type, period) => {
     const existing = get().reportMeta[type];
     if (!existing) return;
     const nextMeta = { ...get().reportMeta, [type]: { ...existing, requestedPeriod: period, periodConfirmedManually: true } };
-    set({ reportMeta: nextMeta });
+    const nextSnapshots = upsertActiveSnapshot(get().reportSnapshots, get().settings.country, nextMeta, get().reportRows);
+    set({ reportMeta: nextMeta, reportSnapshots: nextSnapshots });
     void persistReports(nextMeta, get().reportRows);
+    void localDb.set(DB_KEYS.reportSnapshots, nextSnapshots);
+  },
+
+  setActiveMarketplace: (country) => {
+    const marketplace = SUPPORTED_MARKETPLACES.find((m) => m.country === country);
+    if (!marketplace) return;
+    const state = get();
+    // Save whatever's currently active before switching away — never lost,
+    // even if it hasn't reached a confirmed period yet (saved as a draft).
+    const saved = upsertActiveSnapshot(state.reportSnapshots, state.settings.country, state.reportMeta, state.reportRows);
+    const candidates = saved.filter((s) => s.marketplace === marketplace.country);
+    const toLoad = pickMostRecentSnapshot(candidates);
+    const nextSettings = { ...state.settings, country: marketplace.country, currency: marketplace.currency };
+    const nextMeta = toLoad ? toLoad.reportMeta : {};
+    const nextRows = toLoad ? toLoad.reportRows : EMPTY_ROWS;
+    set({ settings: nextSettings, reportSnapshots: saved, reportMeta: nextMeta, reportRows: nextRows, customDateRange: null });
+    void localDb.set(DB_KEYS.settings, nextSettings);
+    void localDb.set(DB_KEYS.reportSnapshots, saved);
+    void persistReports(nextMeta, nextRows);
+    void localDb.set(DB_KEYS.customDateRange, null);
+  },
+
+  setActivePeriod: (id) => {
+    const state = get();
+    const target = state.reportSnapshots.find((s) => s.id === id);
+    if (!target || target.marketplace !== state.settings.country) return;
+    const saved = upsertActiveSnapshot(state.reportSnapshots, state.settings.country, state.reportMeta, state.reportRows);
+    set({ reportSnapshots: saved, reportMeta: target.reportMeta, reportRows: target.reportRows, customDateRange: null });
+    void localDb.set(DB_KEYS.reportSnapshots, saved);
+    void persistReports(target.reportMeta, target.reportRows);
+    void localDb.set(DB_KEYS.customDateRange, null);
+  },
+
+  startNewReportingPeriod: () => {
+    const state = get();
+    const saved = upsertActiveSnapshot(state.reportSnapshots, state.settings.country, state.reportMeta, state.reportRows);
+    set({ reportSnapshots: saved, reportMeta: {}, reportRows: EMPTY_ROWS, customDateRange: null });
+    void localDb.set(DB_KEYS.reportSnapshots, saved);
+    void persistReports({}, EMPTY_ROWS);
+    void localDb.set(DB_KEYS.customDateRange, null);
+  },
+
+  setCustomDateRange: (range) => {
+    set({ customDateRange: range });
+    void localDb.set(DB_KEYS.customDateRange, range);
   },
 
   setAccountNetProfit: (period, value) => {
@@ -344,6 +491,8 @@ export const useAppStore = create<AppState>((set, get) => ({
       savedAdGroupMappings: [],
       reportMeta: {},
       reportRows: EMPTY_ROWS,
+      reportSnapshots: [],
+      customDateRange: null,
       accountNetProfitByPeriod: {},
       shadowSnapshots: [],
       deliveryWorkflow: {},

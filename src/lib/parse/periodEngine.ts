@@ -1,4 +1,4 @@
-import type { DateRange, PeriodAlignmentStatus, ReportImportMeta } from '../../types';
+import type { DateRange, PeriodAlignmentStatus, ReportImportMeta, ReportType } from '../../types';
 import { daysBetween, maxDate, minDate, today } from './dateUtils';
 
 // Overlap ratio between two ranges, 0..1 relative to the shorter range's length.
@@ -131,4 +131,26 @@ export function combineObserved(a: DateRange | null, b: DateRange | null): DateR
   const start = minDate(a.start, b.start)!;
   const end = maxDate(a.end, b.end)!;
   return { start, end };
+}
+
+export function reportPeriodFromMeta(meta: ReportImportMeta | undefined): DateRange | null {
+  if (!meta) return null;
+  return meta.requestedPeriod ?? meta.observedPeriod;
+}
+
+// The current reporting period is driven by whichever of these report
+// types are loaded (Campaign/Targeting/Advertised Product) — same set
+// deriveWorkspace.getCurrentPeriod and UploadData's PERIOD_DRIVING_REPORT_TYPES
+// already use. Extracted here (rather than kept private to deriveWorkspace.ts)
+// so it can be reused wherever a marketplace/period's "confirmed period" needs
+// to be determined from a reportMeta map — e.g. deciding which saved report
+// snapshot a set of uploads belongs to — without duplicating this logic or
+// creating a circular import between state/store.ts and state/deriveWorkspace.ts.
+export function deriveCurrentPeriod(reportMeta: Partial<Record<ReportType, ReportImportMeta>>): DateRange | null {
+  let period: DateRange | null = null;
+  for (const type of ['campaign', 'targeting', 'advertisedProduct'] as ReportType[]) {
+    const p = reportPeriodFromMeta(reportMeta[type]);
+    if (p) period = combineObserved(period, p);
+  }
+  return period;
 }

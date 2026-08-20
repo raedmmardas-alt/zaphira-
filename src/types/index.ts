@@ -647,12 +647,15 @@ export interface VariantIntelligenceResult {
 // one entry here, not building a second marketplace system.
 export interface MarketplaceOption {
   country: string;
-  label: string;
+  label: string; // full dropdown label, e.g. "United States — Amazon.com"
+  shortLabel: string; // e.g. "United States", for prose like "No Canada data uploaded"
   currency: string;
 }
 
 export const SUPPORTED_MARKETPLACES: MarketplaceOption[] = [
-  { country: 'US', label: 'United States', currency: 'USD' },
+  { country: 'US', label: 'United States — Amazon.com', shortLabel: 'United States', currency: 'USD' },
+  { country: 'CA', label: 'Canada — Amazon.ca', shortLabel: 'Canada', currency: 'CAD' },
+  { country: 'MX', label: 'Mexico — Amazon.com.mx', shortLabel: 'Mexico', currency: 'MXN' },
 ];
 
 // Display Currency is a separate, independent setting from the marketplace's

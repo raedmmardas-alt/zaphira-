@@ -20,4 +20,6 @@ export const DB_KEYS = {
   manualKeywordHistory: 'zaphira/manualKeywordHistory',
   productManualEconomics: 'zaphira/productManualEconomics',
   heliumKeywordImport: 'zaphira/heliumKeywordImport',
+  reportSnapshots: 'zaphira/reportSnapshots',
+  customDateRange: 'zaphira/customDateRange',
 } as const;

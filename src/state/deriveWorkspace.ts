@@ -8,7 +8,7 @@ import { buildAdvertisedProductIndex } from '../lib/aggregate/mapping';
 import type { MappingIndexes } from '../lib/aggregate/mapping';
 import { resolveProductMapping } from '../lib/aggregate/mapping';
 import { buildBaseSearchTerms, buildBaseTargets, buildEnrichedCampaigns } from '../lib/aggregate/amazon';
-import { computeAlignment, combineObserved, periodKey, type AlignmentResult } from '../lib/parse/periodEngine';
+import { computeAlignment, deriveCurrentPeriod, periodKey, reportPeriodFromMeta, type AlignmentResult } from '../lib/parse/periodEngine';
 import { classifyDelivery } from '../lib/engine/delivery';
 import { decideTargetAction } from '../lib/engine/targetActions';
 import { decideCampaignRecommendation } from '../lib/engine/campaignRecommendation';
@@ -54,19 +54,13 @@ export interface Workspace {
 
 type ReportMetaMap = Partial<Record<ReportType, ReportImportMeta>>;
 
-function reportPeriod(meta: ReportImportMeta | undefined): DateRange | null {
-  if (!meta) return null;
-  return meta.requestedPeriod ?? meta.observedPeriod;
-}
-
-function getCurrentPeriod(reportMeta: ReportMetaMap): DateRange | null {
-  let period: DateRange | null = null;
-  for (const type of ['campaign', 'targeting', 'advertisedProduct'] as ReportType[]) {
-    const p = reportPeriod(reportMeta[type]);
-    if (p) period = combineObserved(period, p);
-  }
-  return period;
-}
+// reportPeriodFromMeta/deriveCurrentPeriod live in periodEngine.ts (shared
+// with state/store.ts, which needs the same "what period does this
+// reportMeta represent" logic to decide which saved report snapshot a set
+// of uploads belongs to) — kept as local aliases here so the rest of this
+// file didn't need renaming.
+const reportPeriod = reportPeriodFromMeta;
+const getCurrentPeriod = deriveCurrentPeriod;
 
 export function buildWorkspace(
   reportMeta: ReportMetaMap,

@@ -130,12 +130,14 @@ function ReportingPeriodBar() {
   const ws = useWorkspace();
   const reportMeta = useAppStore((s) => s.reportMeta);
   const confirmReportPeriod = useAppStore((s) => s.confirmReportPeriod);
+  const startNewReportingPeriod = useAppStore((s) => s.startNewReportingPeriod);
   const [editing, setEditing] = useState(false);
   const [start, setStart] = useState('');
   const [end, setEnd] = useState('');
 
   const loadedPeriodTypes = PERIOD_DRIVING_REPORT_TYPES.filter((t) => reportMeta[t]);
   const canEdit = loadedPeriodTypes.length > 0;
+  const hasAnyReports = Object.keys(reportMeta).length > 0;
 
   function begin() {
     if (!canEdit) return;
@@ -150,8 +152,18 @@ function ReportingPeriodBar() {
     setEditing(false);
   }
 
+  function startNewPeriod() {
+    if (confirm('Save the currently loaded reports as-is and clear this screen for a new reporting period? Nothing already saved is deleted — you can switch back to it anytime from Reporting Period in the top bar.')) {
+      startNewReportingPeriod();
+    }
+  }
+
   return (
-    <Card title="Reporting Period" subtitle="Applies to every uploaded report at once — most Amazon exports don't include their own date range.">
+    <Card
+      title="Reporting Period"
+      subtitle="Applies to every uploaded report at once — most Amazon exports don't include their own date range."
+      actions={hasAnyReports ? <button onClick={startNewPeriod} className="rounded-lg border border-border-subtle px-3 py-1.5 text-xs font-medium text-navy-700 hover:bg-navy-900/5">Start New Reporting Period</button> : undefined}
+    >
       {!editing ? (
         <div className="flex items-center gap-3">
           <button
