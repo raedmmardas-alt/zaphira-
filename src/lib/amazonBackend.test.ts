@@ -70,6 +70,17 @@ describe('campaign sync client (Phase 2A) -- same graceful-failure guarantees', 
     const status = await fetchCampaignSyncStatus();
     expect(status.lastCampaignSync).toBeNull();
     expect(status.lastSyncError).toMatch(/not running/);
+    expect(status.syncInProgress).toBe(false);
+  });
+
+  it('fetchCampaignSyncStatus passes through syncInProgress:true unchanged, so the UI can show sync progress after a reload', async () => {
+    const real = {
+      lastCampaignSync: null, lastRequestedPeriod: { start: '2026-08-09', end: '2026-08-12' },
+      lastRowCount: null, lastSyncError: null, syncInProgress: true,
+    };
+    globalThis.fetch = vi.fn().mockResolvedValue({ ok: true, json: async () => real });
+    const status = await fetchCampaignSyncStatus();
+    expect(status).toEqual(real);
   });
 
   it('syncCampaignData sends the exact startDate/endDate to its own local backend', async () => {

@@ -139,7 +139,7 @@ function CampaignSyncCard() {
   }, []);
 
   async function handleSync() {
-    if (!startDate || !endDate) return;
+    if (!startDate || !endDate || syncing || syncStatus?.syncInProgress) return;
     setSyncing(true);
     setSyncError(null);
     try {
@@ -212,12 +212,17 @@ function CampaignSyncCard() {
         </label>
         <button
           onClick={handleSync}
-          disabled={syncing || !startDate || !endDate}
+          disabled={syncing || !!syncStatus?.syncInProgress || !startDate || !endDate}
           className="rounded-lg bg-brand-600 px-4 py-2 text-sm font-semibold text-white hover:bg-brand-700 disabled:cursor-not-allowed disabled:opacity-50"
         >
-          {syncing ? 'Syncing…' : 'Sync Campaign Data'}
+          {syncing || syncStatus?.syncInProgress ? 'Syncing…' : 'Sync Campaign Data'}
         </button>
       </div>
+      {(syncing || syncStatus?.syncInProgress) && (
+        <p className="mb-3 text-xs text-navy-500">
+          Amazon is generating the report… this can take up to a few minutes. Please don't close this tab.
+        </p>
+      )}
       {syncError && <p className="mb-3 text-xs text-negative-600">{syncError}</p>}
 
       {apiCampaignSync && apiTotals && (

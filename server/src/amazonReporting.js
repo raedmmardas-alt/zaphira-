@@ -22,12 +22,19 @@ function regionHost() {
 }
 
 // Overridable via env var only for tests, so the polling loop's real logic
-// (including waiting through multiple PENDING/PROCESSING responses) can be
-// exercised without a real multi-second wall-clock wait. Production always
-// uses the 2000ms default -- this is never meant to be tuned in
+// (including waiting through multiple PENDING/PROCESSING responses, and
+// timing out) can be exercised without a real multi-minute wall-clock wait.
+// Production always uses these defaults -- neither is meant to be tuned in
 // server/.env.amazon.local.
-const DEFAULT_POLL_INTERVAL_MS = Number(process.env.AMAZON_REPORT_POLL_INTERVAL_MS) || 2000;
-const DEFAULT_TIMEOUT_MS = 60_000;
+//
+// Amazon's async reports can legitimately take minutes to generate,
+// especially for wider date ranges -- 60s was too short and caused real
+// syncs to fail while the report was still being generated. 5 minutes is a
+// reasonable maximum wait; a 5s poll interval keeps the number of status
+// checks reasonable across that window (~60 polls) without polling so
+// slowly the UI feels stuck.
+const DEFAULT_POLL_INTERVAL_MS = Number(process.env.AMAZON_REPORT_POLL_INTERVAL_MS) || 5000;
+const DEFAULT_TIMEOUT_MS = Number(process.env.AMAZON_REPORT_TIMEOUT_MS) || 300_000;
 
 export class AmazonReportingError extends Error {}
 

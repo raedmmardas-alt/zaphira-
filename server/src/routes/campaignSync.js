@@ -9,7 +9,13 @@
 import { Router } from 'express';
 import { isConfigured } from '../config.js';
 import { syncCampaignData } from '../campaignSync.js';
-import { recordCampaignSyncSuccess, recordCampaignSyncError, getCampaignSyncStatus } from '../campaignSyncState.js';
+import {
+  markCampaignSyncStarted,
+  recordCampaignSyncSuccess,
+  recordCampaignSyncError,
+  getCampaignSyncStatus,
+  isCampaignSyncInProgress,
+} from '../campaignSyncState.js';
 import { logError, sanitize } from '../logger.js';
 
 export const campaignSyncRouter = Router();
@@ -34,12 +40,23 @@ campaignSyncRouter.post('/sync', async (req, res) => {
     });
   }
 
+  // Guards against a double-click, a second browser tab, or a retried
+  // request starting a second Amazon report while one is still being
+  // generated -- never creates a second report for an overlapping request.
+  if (isCampaignSyncInProgress()) {
+    return res.status(200).json({
+      success: false,
+      error: 'A campaign sync is already in progress. Please wait for it to finish before starting another.',
+    });
+  }
+
   if (!isConfigured()) {
     const message = 'Amazon Ads credentials are not configured. Run `npm run setup` in server/ first.';
     recordCampaignSyncError(message);
     return res.status(200).json({ success: false, error: message });
   }
 
+  markCampaignSyncStarted();
   try {
     const result = await syncCampaignData(startDate, endDate);
     const requestedPeriod = { start: startDate, end: endDate };

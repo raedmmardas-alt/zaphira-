@@ -84,6 +84,7 @@ export interface CampaignSyncStatus {
   lastRequestedPeriod: { start: string; end: string } | null;
   lastRowCount: number | null;
   lastSyncError: string | null;
+  syncInProgress: boolean;
 }
 
 export interface CampaignSyncResult {
@@ -101,6 +102,7 @@ const BACKEND_UNREACHABLE_CAMPAIGN_SYNC_STATUS: CampaignSyncStatus = {
   lastRequestedPeriod: null,
   lastRowCount: null,
   lastSyncError: 'Local Amazon Ads backend is not running. Start it with `npm start` inside the server/ folder.',
+  syncInProgress: false,
 };
 
 export async function fetchCampaignSyncStatus(): Promise<CampaignSyncStatus> {
