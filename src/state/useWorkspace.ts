@@ -12,21 +12,32 @@ export function useWorkspace() {
   const accountNetProfitByPeriod = useAppStore((s) => s.accountNetProfitByPeriod);
   const customDateRange = useAppStore((s) => s.customDateRange);
   const apiCampaignSync = useAppStore((s) => s.apiCampaignSync);
+  const apiTargetingSync = useAppStore((s) => s.apiTargetingSync);
 
   return useMemo(() => {
-    // Campaign Data Source (Phase 2A): defensively defaults to 'MANUAL' for
-    // a persisted Settings object saved before this field existed (real
-    // users' existing IndexedDB data) — never throws, never silently
-    // switches an existing installation's behavior. When 'API' is selected
-    // and a sync has actually completed, the campaign key is swapped for
-    // the API-synced meta/rows -- every other report type (Targeting,
-    // Search Term, Advertised Product, Sellerboard) is completely
-    // untouched, and the manual reportMeta.campaign/reportRows.campaign
-    // slot itself is never mutated by this — switching the source back to
-    // 'MANUAL' restores it exactly as it was.
+    // Campaign/Targeting Data Source (Phase 2A/2B): defensively defaults to
+    // 'MANUAL' for a persisted Settings object saved before these fields
+    // existed (real users' existing IndexedDB data) — never throws, never
+    // silently switches an existing installation's behavior. When 'API' is
+    // selected and a sync has actually completed, that report type's key
+    // is swapped for the API-synced meta/rows -- every other report type
+    // (Search Term, Advertised Product, Sellerboard, and whichever of
+    // Campaign/Targeting is still on MANUAL) is completely untouched, and
+    // the manual reportMeta/reportRows slots themselves are never mutated
+    // by this — switching a source back to 'MANUAL' restores it exactly
+    // as it was.
     const useApiCampaigns = (settings.campaignDataSource ?? 'MANUAL') === 'API' && apiCampaignSync !== null;
-    const sourcedMeta = useApiCampaigns ? { ...reportMeta, campaign: apiCampaignSync!.meta } : reportMeta;
-    const sourcedRows = useApiCampaigns ? { ...reportRows, campaign: apiCampaignSync!.rows } : reportRows;
+    const useApiTargeting = (settings.targetingDataSource ?? 'MANUAL') === 'API' && apiTargetingSync !== null;
+    const sourcedMeta = {
+      ...reportMeta,
+      ...(useApiCampaigns ? { campaign: apiCampaignSync!.meta } : {}),
+      ...(useApiTargeting ? { targeting: apiTargetingSync!.meta } : {}),
+    };
+    const sourcedRows = {
+      ...reportRows,
+      ...(useApiCampaigns ? { campaign: apiCampaignSync!.rows } : {}),
+      ...(useApiTargeting ? { targeting: apiTargetingSync!.rows } : {}),
+    };
 
     // A custom range is only ever set once assessCustomRangeSupport (see
     // the Reporting Period picker in GlobalContextBar) has already
@@ -41,5 +52,5 @@ export function useWorkspace() {
     const effectiveMeta = customDateRange ? buildCustomRangeReportMeta(sourcedMeta, customDateRange) : sourcedMeta;
     const effectiveRows = customDateRange ? filterReportRowsToRange(sourcedRows, customDateRange) : sourcedRows;
     return buildWorkspace(effectiveMeta, effectiveRows, products, savedAdGroupMappings, settings, accountNetProfitByPeriod);
-  }, [reportMeta, reportRows, products, savedAdGroupMappings, settings, accountNetProfitByPeriod, customDateRange, apiCampaignSync]);
+  }, [reportMeta, reportRows, products, savedAdGroupMappings, settings, accountNetProfitByPeriod, customDateRange, apiCampaignSync, apiTargetingSync]);
 }

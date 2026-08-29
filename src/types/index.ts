@@ -710,6 +710,13 @@ export interface Settings {
   // campaign-level rows useWorkspace() feeds into the existing,
   // unmodified recommendation engine — never a second data model.
   campaignDataSource: 'API' | 'MANUAL';
+  // Same pattern as campaignDataSource, for targeting-level rows instead
+  // (reportMeta.targeting/reportRows.targeting vs AppState.apiTargetingSync).
+  // Defaults to 'MANUAL'. Only ever affects which targeting rows
+  // useWorkspace() feeds into the existing, unmodified recommendation
+  // engine (including NO DELIVERY/LOW DELIVERY thresholds) — never a
+  // second data model.
+  targetingDataSource: 'API' | 'MANUAL';
 }
 
 export const DEFAULT_SETTINGS: Settings = {
@@ -730,6 +737,7 @@ export const DEFAULT_SETTINGS: Settings = {
   displayCurrency: 'USD',
   exchangeRates: {},
   campaignDataSource: 'MANUAL',
+  targetingDataSource: 'MANUAL',
 };
 
 export const DEFAULT_PRODUCTS: Product[] = [

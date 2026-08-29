@@ -77,6 +77,29 @@ export function reconcileCampaignSources(manual: CampaignSourceTotals, api: Camp
   ];
 }
 
+// Compares Amazon API-synced targeting totals against manually-uploaded
+// Targeting CSV totals for the SAME confirmed period (see
+// state/store.ts's apiTargetingSync + reportMeta.targeting/
+// reportRows.targeting, and Settings.targetingDataSource). Reuses the
+// exact same check() tolerance logic as reconcileCampaignSources above —
+// no new formula, no new thresholds. Never called when the periods don't
+// match exactly; that decision is made by the caller.
+export interface TargetingSourceTotals {
+  spend: number;
+  sales: number;
+  orders: number;
+  clicks: number;
+}
+
+export function reconcileTargetingSources(manual: TargetingSourceTotals, api: TargetingSourceTotals): ReconciliationCheck[] {
+  return [
+    check('Spend: Amazon API vs Manual Targeting CSV', api.spend, manual.spend),
+    check('Attributed Sales: Amazon API vs Manual Targeting CSV', api.sales, manual.sales),
+    check('Orders: Amazon API vs Manual Targeting CSV', api.orders, manual.orders),
+    check('Clicks: Amazon API vs Manual Targeting CSV', api.clicks, manual.clicks),
+  ];
+}
+
 export function worstStatus(checks: ReconciliationCheck[]): ReconciliationStatus {
   if (checks.some((c) => c.status === 'DATA_MISMATCH_REVIEW_REQUIRED')) return 'DATA_MISMATCH_REVIEW_REQUIRED';
   if (checks.some((c) => c.status === 'SMALL_ATTRIBUTION_DIFFERENCE')) return 'SMALL_ATTRIBUTION_DIFFERENCE';

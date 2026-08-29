@@ -160,3 +160,99 @@ export async function fetchCampaignSyncResult(): Promise<CampaignSyncResult> {
     return { success: false, error: BACKEND_UNREACHABLE_CAMPAIGN_SYNC_STATUS.lastSyncError! };
   }
 }
+
+// --- Targeting sync (Phase 2B) -------------------------------------------
+
+export interface ApiTargetingRow {
+  campaign: string;
+  adGroup: string;
+  targetingText: string;
+  matchType: string;
+  targetingId?: string;
+  bid: number | null;
+  status?: string;
+  impressions: number;
+  clicks: number;
+  spend: number;
+  orders: number;
+  sales: number;
+  activityStart?: string;
+  activityEnd?: string;
+}
+
+export interface TargetingSyncStatus {
+  lastTargetingSync: string | null;
+  lastRequestedPeriod: { start: string; end: string } | null;
+  lastRowCount: number | null;
+  lastSyncError: string | null;
+  syncInProgress: boolean;
+  reportId: string | null;
+  pollAttempts: number;
+  lastPolledStatus: string | null;
+}
+
+export interface TargetingSyncResult {
+  success: boolean;
+  error?: string;
+  pending?: boolean;
+  message?: string;
+  requestedPeriod?: { start: string; end: string };
+  rows?: ApiTargetingRow[];
+  targetingCount?: number;
+  performanceRowCount?: number;
+  syncedAt?: string;
+}
+
+const BACKEND_UNREACHABLE_TARGETING_SYNC_STATUS: TargetingSyncStatus = {
+  lastTargetingSync: null,
+  lastRequestedPeriod: null,
+  lastRowCount: null,
+  lastSyncError: 'Local Amazon Ads backend is not running. Start it with `npm start` inside the server/ folder.',
+  syncInProgress: false,
+  reportId: null,
+  pollAttempts: 0,
+  lastPolledStatus: null,
+};
+
+export async function fetchTargetingSyncStatus(): Promise<TargetingSyncStatus> {
+  try {
+    const res = await fetch(`${BACKEND_URL}/api/amazon/targeting/status`);
+    if (!res.ok) return BACKEND_UNREACHABLE_TARGETING_SYNC_STATUS;
+    return (await res.json()) as TargetingSyncStatus;
+  } catch {
+    return BACKEND_UNREACHABLE_TARGETING_SYNC_STATUS;
+  }
+}
+
+// Kicks off a Sponsored Products targeting sync for [startDate, endDate]
+// (YYYY-MM-DD) and returns almost immediately with an acknowledgement --
+// it does NOT wait for Amazon's report to finish generating. Poll
+// fetchTargetingSyncStatus() for live progress, then call
+// fetchTargetingSyncResult() once syncInProgress is false. Read-only end
+// to end -- see server/src/routes/targetingSync.js.
+export async function syncTargetingData(startDate: string, endDate: string): Promise<TargetingSyncResult> {
+  try {
+    const res = await fetch(`${BACKEND_URL}/api/amazon/targeting/sync`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ startDate, endDate }),
+    });
+    if (!res.ok) return { success: false, error: BACKEND_UNREACHABLE_TARGETING_SYNC_STATUS.lastSyncError! };
+    return (await res.json()) as TargetingSyncResult;
+  } catch {
+    return { success: false, error: BACKEND_UNREACHABLE_TARGETING_SYNC_STATUS.lastSyncError! };
+  }
+}
+
+// Fetches the most recently completed background sync's normalized rows.
+// Call this once fetchTargetingSyncStatus() reports syncInProgress:false
+// with no lastSyncError.
+export async function fetchTargetingSyncResult(): Promise<TargetingSyncResult> {
+  try {
+    const res = await fetch(`${BACKEND_URL}/api/amazon/targeting/result`);
+    if (!res.ok) return { success: false, error: BACKEND_UNREACHABLE_TARGETING_SYNC_STATUS.lastSyncError! };
+    return (await res.json()) as TargetingSyncResult;
+  } catch {
+    return { success: false, error: BACKEND_UNREACHABLE_TARGETING_SYNC_STATUS.lastSyncError! };
+  }
+}

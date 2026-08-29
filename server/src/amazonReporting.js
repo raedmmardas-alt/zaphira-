@@ -172,7 +172,10 @@ export async function waitForReportUrl(reportId, { pollIntervalMs = DEFAULT_POLL
   }
 }
 
-async function downloadReport(url) {
+// Exported so other report-type modules (e.g. amazonTargetingReporting.js)
+// can reuse the same download/decompress logic without duplicating it or
+// touching campaign sync's own request-building code.
+export async function downloadReport(url) {
   // Pre-signed download URL -- no Authorization header sent.
   const res = await fetch(url);
   if (!res.ok) throw new AmazonReportingError(`Failed to download the Amazon report (HTTP ${res.status}).`);

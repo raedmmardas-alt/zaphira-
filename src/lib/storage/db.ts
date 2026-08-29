@@ -23,4 +23,5 @@ export const DB_KEYS = {
   reportSnapshots: 'zaphira/reportSnapshots',
   customDateRange: 'zaphira/customDateRange',
   apiCampaignSync: 'zaphira/apiCampaignSync',
+  apiTargetingSync: 'zaphira/apiTargetingSync',
 } as const;

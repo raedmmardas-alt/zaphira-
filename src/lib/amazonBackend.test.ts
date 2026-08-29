@@ -1,5 +1,8 @@
 import { describe, it, expect, vi, afterEach } from 'vitest';
-import { fetchAmazonStatus, testAmazonConnection, fetchCampaignSyncStatus, syncCampaignData } from './amazonBackend';
+import {
+  fetchAmazonStatus, testAmazonConnection, fetchCampaignSyncStatus, syncCampaignData,
+  fetchTargetingSyncStatus, syncTargetingData, fetchTargetingSyncResult,
+} from './amazonBackend';
 
 const originalFetch = globalThis.fetch;
 
@@ -119,6 +122,66 @@ describe('campaign sync client (Phase 2A) -- same graceful-failure guarantees', 
   it('never includes a secret in a campaign sync response, even from a malformed backend body', async () => {
     globalThis.fetch = vi.fn().mockResolvedValue({ ok: true, json: async () => ({ success: true, rows: [] }) });
     const result = await syncCampaignData('2026-08-09', '2026-08-12');
+    expect(JSON.stringify(result)).not.toMatch(/secret/i);
+  });
+});
+
+describe('targeting sync client (Phase 2B) -- same graceful-failure guarantees', () => {
+  it('fetchTargetingSyncStatus returns a clear "not running" status when the backend is unreachable', async () => {
+    globalThis.fetch = vi.fn().mockRejectedValue(new Error('fetch failed'));
+    const status = await fetchTargetingSyncStatus();
+    expect(status.lastTargetingSync).toBeNull();
+    expect(status.lastSyncError).toMatch(/not running/);
+    expect(status.syncInProgress).toBe(false);
+  });
+
+  it('fetchTargetingSyncStatus passes through syncInProgress:true unchanged, so the UI can show sync progress after a reload', async () => {
+    const real = {
+      lastTargetingSync: null, lastRequestedPeriod: { start: '2026-08-09', end: '2026-08-12' },
+      lastRowCount: null, lastSyncError: null, syncInProgress: true, reportId: 'r-1', pollAttempts: 3, lastPolledStatus: 'PROCESSING',
+    };
+    globalThis.fetch = vi.fn().mockResolvedValue({ ok: true, json: async () => real });
+    const status = await fetchTargetingSyncStatus();
+    expect(status).toEqual(real);
+  });
+
+  it('syncTargetingData sends the exact startDate/endDate to its own local backend', async () => {
+    let capturedBody: string | undefined;
+    globalThis.fetch = vi.fn().mockImplementation(async (_url, opts) => {
+      capturedBody = opts?.body as string;
+      return { ok: true, json: async () => ({ success: true, pending: true }) };
+    });
+    await syncTargetingData('2026-08-09', '2026-08-12');
+    const sent = JSON.parse(capturedBody!);
+    expect(sent).toEqual({ startDate: '2026-08-09', endDate: '2026-08-12' });
+  });
+
+  it('syncTargetingData returns success:false gracefully when the backend is unreachable, never throwing', async () => {
+    globalThis.fetch = vi.fn().mockRejectedValue(new Error('ECONNREFUSED'));
+    const result = await syncTargetingData('2026-08-09', '2026-08-12');
+    expect(result.success).toBe(false);
+    expect(result.error).toMatch(/not running/);
+  });
+
+  it('fetchTargetingSyncResult passes through a real success response, including live keyword status and bid, unchanged', async () => {
+    const real = {
+      success: true,
+      requestedPeriod: { start: '2026-08-09', end: '2026-08-12' },
+      rows: [{ campaign: 'Coconut - Sponsored Products', adGroup: 'Coconut - Broad', targetingText: 'coconut oil organic', matchType: 'EXACT', targetingId: '222', bid: 0.85, status: 'ENABLED', impressions: 400, clicks: 18, spend: 12.4, orders: 2, sales: 39.98 }],
+      targetingCount: 1,
+      performanceRowCount: 1,
+      syncedAt: '2026-08-29T00:00:00.000Z',
+    };
+    globalThis.fetch = vi.fn().mockResolvedValue({ ok: true, json: async () => real });
+    const result = await fetchTargetingSyncResult();
+    expect(result).toEqual(real);
+    expect(result.rows![0].status).toBe('ENABLED');
+    expect(result.rows![0].bid).toBe(0.85);
+  });
+
+  it('never includes a secret in a targeting sync response, even from a malformed backend body', async () => {
+    globalThis.fetch = vi.fn().mockResolvedValue({ ok: true, json: async () => ({ success: true, rows: [] }) });
+    const result = await syncTargetingData('2026-08-09', '2026-08-12');
     expect(JSON.stringify(result)).not.toMatch(/secret/i);
   });
 });

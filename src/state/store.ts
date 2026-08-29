@@ -111,6 +111,11 @@ interface AppState {
   // unmodified recommendation engine. Same CampaignRow shape as the
   // manual importer — no second data model.
   apiCampaignSync: { meta: ReportImportMeta; rows: CampaignRow[] } | null;
+  // Same pattern as apiCampaignSync (Phase 2B), for targeting-level data —
+  // kept entirely SEPARATE from reportMeta.targeting/reportRows.targeting
+  // (the manual Targeting CSV slot). Settings.targetingDataSource decides
+  // which one useWorkspace() feeds into the existing, unmodified engine.
+  apiTargetingSync: { meta: ReportImportMeta; rows: TargetingRow[] } | null;
   accountNetProfitByPeriod: Record<string, AccountNetProfitEntry>;
   shadowSnapshots: ShadowSnapshot[];
   deliveryWorkflow: Record<string, DeliveryWorkflowEntry>;
@@ -151,6 +156,10 @@ interface AppState {
   // purely additive/replacing within its own separate slot.
   setApiCampaignSync: (meta: ReportImportMeta, rows: CampaignRow[]) => void;
   clearApiCampaignSync: () => void;
+  // Stores the result of an Amazon Ads API targeting sync. Never touches
+  // reportMeta.targeting/reportRows.targeting (the manual CSV slot).
+  setApiTargetingSync: (meta: ReportImportMeta, rows: TargetingRow[]) => void;
+  clearApiTargetingSync: () => void;
   setAccountNetProfit: (period: DateRange, value: number) => void;
   saveShadowSnapshot: (s: ShadowSnapshot) => void;
   saveShadowSnapshotBatch: (snapshots: ShadowSnapshot[]) => void;
@@ -203,6 +212,7 @@ export const useAppStore = create<AppState>((set, get) => ({
   reportSnapshots: [],
   customDateRange: null,
   apiCampaignSync: null,
+  apiTargetingSync: null,
   accountNetProfitByPeriod: {},
   shadowSnapshots: [],
   deliveryWorkflow: {},
@@ -211,7 +221,7 @@ export const useAppStore = create<AppState>((set, get) => ({
   heliumSources: [],
 
   hydrate: async () => {
-    const [settings, products, mappings, reports, anp, shadows, deliveryWf, manualKw, manualEcon, heliumSources, snapshotsPersisted, customRangePersisted, apiCampaignSyncPersisted] = await Promise.all([
+    const [settings, products, mappings, reports, anp, shadows, deliveryWf, manualKw, manualEcon, heliumSources, snapshotsPersisted, customRangePersisted, apiCampaignSyncPersisted, apiTargetingSyncPersisted] = await Promise.all([
       localDb.get<Settings>(DB_KEYS.settings),
       localDb.get<Product[]>(DB_KEYS.products),
       localDb.get<SavedAdGroupMapping[]>(DB_KEYS.savedAdGroupMappings),
@@ -225,6 +235,7 @@ export const useAppStore = create<AppState>((set, get) => ({
       localDb.get<ReportSnapshot[]>(DB_KEYS.reportSnapshots),
       localDb.get<DateRange | null>(DB_KEYS.customDateRange),
       localDb.get<{ meta: ReportImportMeta; rows: CampaignRow[] } | null>(DB_KEYS.apiCampaignSync),
+      localDb.get<{ meta: ReportImportMeta; rows: TargetingRow[] } | null>(DB_KEYS.apiTargetingSync),
     ]);
 
     const reportMeta: AppState['reportMeta'] = {};
@@ -266,6 +277,7 @@ export const useAppStore = create<AppState>((set, get) => ({
       reportSnapshots: resolvedSnapshots,
       customDateRange: customRangePersisted ?? null,
       apiCampaignSync: apiCampaignSyncPersisted ?? null,
+      apiTargetingSync: apiTargetingSyncPersisted ?? null,
       accountNetProfitByPeriod: anp ?? {},
       shadowSnapshots: shadows ?? [],
       deliveryWorkflow: deliveryWf ?? {},
@@ -414,6 +426,16 @@ export const useAppStore = create<AppState>((set, get) => ({
     void localDb.set(DB_KEYS.apiCampaignSync, null);
   },
 
+  setApiTargetingSync: (meta, rows) => {
+    const next = { meta, rows };
+    set({ apiTargetingSync: next });
+    void localDb.set(DB_KEYS.apiTargetingSync, next);
+  },
+  clearApiTargetingSync: () => {
+    set({ apiTargetingSync: null });
+    void localDb.set(DB_KEYS.apiTargetingSync, null);
+  },
+
   setAccountNetProfit: (period, value) => {
     const key = periodKey(period);
     const entry: AccountNetProfitEntry = { periodKey: key, period, accountNetProfit: value, enteredAt: new Date().toISOString() };
@@ -520,6 +542,7 @@ export const useAppStore = create<AppState>((set, get) => ({
       reportSnapshots: [],
       customDateRange: null,
       apiCampaignSync: null,
+      apiTargetingSync: null,
       accountNetProfitByPeriod: {},
       shadowSnapshots: [],
       deliveryWorkflow: {},

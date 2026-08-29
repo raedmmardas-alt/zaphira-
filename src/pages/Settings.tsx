@@ -10,10 +10,11 @@ import { useWorkspace } from '../state/useWorkspace';
 import { formatCurrency, formatNumber } from '../lib/engine/metrics';
 import {
   fetchAmazonStatus, testAmazonConnection, fetchCampaignSyncStatus, syncCampaignData, fetchCampaignSyncResult,
-  type AmazonConnectionStatus, type CampaignSyncStatus,
+  fetchTargetingSyncStatus, syncTargetingData, fetchTargetingSyncResult,
+  type AmazonConnectionStatus, type CampaignSyncStatus, type TargetingSyncStatus,
 } from '../lib/amazonBackend';
-import { reconcileCampaignSources, worstStatus } from '../lib/aggregate/reconciliation';
-import type { CampaignRow, Product, ReconciliationStatus, ReportImportMeta, StrategyPosture } from '../types';
+import { reconcileCampaignSources, reconcileTargetingSources, worstStatus } from '../lib/aggregate/reconciliation';
+import type { CampaignRow, Product, ReconciliationStatus, ReportImportMeta, StrategyPosture, TargetingRow } from '../types';
 
 const CONNECTION_TONE: Record<AmazonConnectionStatus['status'], BadgeTone> = {
   CONNECTED: 'positive',
@@ -315,6 +316,200 @@ function CampaignSyncCard() {
   );
 }
 
+interface TargetingTotals { spend: number; sales: number; orders: number; clicks: number }
+
+function sumTargetingRows(rows: TargetingRow[]): TargetingTotals {
+  return rows.reduce(
+    (a, r) => ({ spend: a.spend + r.spend, sales: a.sales + r.sales, orders: a.orders + r.orders, clicks: a.clicks + r.clicks }),
+    { spend: 0, sales: 0, orders: 0, clicks: 0 },
+  );
+}
+
+// Phase 2B: Sponsored Products keyword + product/category targeting sync
+// ONLY. Search Terms and Advertised Products are not synced yet -- upload
+// those manually as usual. Never touches
+// reportMeta.targeting/reportRows.targeting (the manual CSV slot); stores
+// results in the separate apiTargetingSync slot instead (see
+// state/store.ts). Mirrors CampaignSyncCard's structure exactly.
+function TargetingSyncCard() {
+  const settings = useAppStore((s) => s.settings);
+  const updateSettings = useAppStore((s) => s.updateSettings);
+  const apiTargetingSync = useAppStore((s) => s.apiTargetingSync);
+  const setApiTargetingSync = useAppStore((s) => s.setApiTargetingSync);
+  const reportMeta = useAppStore((s) => s.reportMeta);
+  const reportRows = useAppStore((s) => s.reportRows);
+
+  const [startDate, setStartDate] = useState('');
+  const [endDate, setEndDate] = useState('');
+  const [syncing, setSyncing] = useState(false);
+  const [syncError, setSyncError] = useState<string | null>(null);
+  const [syncStatus, setSyncStatus] = useState<TargetingSyncStatus | null>(null);
+
+  // See CampaignSyncCard's watchUntilDone for the full rationale -- same
+  // background-sync-with-live-progress pattern, applied to targeting.
+  async function watchUntilDone(fallbackPeriod: { start: string; end: string }) {
+    let status = await fetchTargetingSyncStatus();
+    setSyncStatus(status);
+    let safety = 0;
+    while (status.syncInProgress && safety < 4000) {
+      await new Promise((resolve) => setTimeout(resolve, 4000));
+      status = await fetchTargetingSyncStatus();
+      setSyncStatus(status);
+      safety += 1;
+    }
+
+    if (status.lastSyncError) {
+      setSyncError(status.lastSyncError);
+      return;
+    }
+
+    const result = await fetchTargetingSyncResult();
+    if (!result.success || !result.rows) return; // nothing new to apply
+
+    const requestedPeriod = result.requestedPeriod ?? fallbackPeriod;
+    const meta: ReportImportMeta = {
+      id: crypto.randomUUID(),
+      type: 'targeting',
+      filename: 'Amazon Ads API sync',
+      fileSizeBytes: 0,
+      rowCount: result.rows.length,
+      importedAt: new Date().toISOString(),
+      requestedPeriod,
+      observedPeriod: requestedPeriod,
+      periodConfirmedManually: true,
+      status: 'OK',
+      detectedColumns: ['campaignId', 'adGroupId', 'keywordId', 'matchType', 'keyword', 'impressions', 'clicks', 'cost', 'purchases1d', 'sales1d'],
+      missingRequiredFields: [],
+      missingOptionalFields: [],
+    };
+    setApiTargetingSync(meta, result.rows as TargetingRow[]);
+  }
+
+  useEffect(() => {
+    void fetchTargetingSyncStatus().then((status) => {
+      setSyncStatus(status);
+      if (status.syncInProgress && status.lastRequestedPeriod) {
+        setSyncing(true);
+        void watchUntilDone(status.lastRequestedPeriod).finally(() => setSyncing(false));
+      }
+    });
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
+  async function handleSync() {
+    if (!startDate || !endDate || syncing || syncStatus?.syncInProgress) return;
+    setSyncing(true);
+    setSyncError(null);
+    try {
+      const kickoff = await syncTargetingData(startDate, endDate);
+      if (!kickoff.success) {
+        setSyncError(kickoff.error ?? 'Targeting sync failed.');
+        return;
+      }
+      await watchUntilDone({ start: startDate, end: endDate });
+    } finally {
+      setSyncing(false);
+    }
+  }
+
+  const apiTotals = apiTargetingSync ? sumTargetingRows(apiTargetingSync.rows) : null;
+
+  // Reconciliation only runs when a manual Targeting CSV AND an API sync
+  // both cover the exact same confirmed period -- never a "close enough"
+  // guess, and never silently overwrites either source.
+  const manualPeriod = reportMeta.targeting?.requestedPeriod ?? reportMeta.targeting?.observedPeriod ?? null;
+  const apiPeriod = apiTargetingSync?.meta.requestedPeriod ?? null;
+  const periodsMatch = !!(manualPeriod && apiPeriod && manualPeriod.start === apiPeriod.start && manualPeriod.end === apiPeriod.end);
+  const manualTotals = periodsMatch ? sumTargetingRows(reportRows.targeting) : null;
+  const targetingReconciliation = periodsMatch && manualTotals && apiTotals
+    ? worstStatus(reconcileTargetingSources(manualTotals, apiTotals))
+    : null;
+
+  return (
+    <Card
+      title="Amazon Targeting Data Sync"
+      subtitle="Sponsored Products keyword + product/category targeting only (Phase 2B). Search Terms and Advertised Products are not synced yet — upload those manually as usual."
+    >
+      <div className="mb-4 flex items-center gap-3 text-sm">
+        <span className="font-medium text-navy-600">Targeting Data Source</span>
+        <select
+          value={settings.targetingDataSource}
+          onChange={(e) => updateSettings({ targetingDataSource: e.target.value as 'API' | 'MANUAL' })}
+          className="rounded-lg border border-border-subtle px-2 py-1 text-sm"
+        >
+          <option value="MANUAL">Manual Report</option>
+          <option value="API">Amazon API</option>
+        </select>
+      </div>
+
+      <div className="mb-3 flex flex-wrap items-end gap-2">
+        <label className="block">
+          <span className="mb-1 block text-xs font-medium text-navy-600">Start Date</span>
+          <input type="date" value={startDate} onChange={(e) => setStartDate(e.target.value)} className="rounded-lg border border-border-subtle px-2 py-1.5 text-sm" />
+        </label>
+        <label className="block">
+          <span className="mb-1 block text-xs font-medium text-navy-600">End Date</span>
+          <input type="date" value={endDate} onChange={(e) => setEndDate(e.target.value)} className="rounded-lg border border-border-subtle px-2 py-1.5 text-sm" />
+        </label>
+        <button
+          onClick={handleSync}
+          disabled={syncing || !!syncStatus?.syncInProgress || !startDate || !endDate}
+          className="rounded-lg bg-brand-600 px-4 py-2 text-sm font-semibold text-white hover:bg-brand-700 disabled:cursor-not-allowed disabled:opacity-50"
+        >
+          {syncing || syncStatus?.syncInProgress ? 'Syncing…' : 'Sync Targeting Data'}
+        </button>
+      </div>
+      {(syncing || syncStatus?.syncInProgress) && (
+        <p className="mb-3 text-xs text-navy-500">
+          Amazon is generating the report… this can take a few minutes up to a few hours.
+          {syncStatus?.lastPolledStatus && ` Amazon status: ${syncStatus.lastPolledStatus} (check ${syncStatus.pollAttempts}).`}
+          {' '}You can leave this page — sync continues in the background.
+        </p>
+      )}
+      {syncError && <p className="mb-3 text-xs text-negative-600">{syncError}</p>}
+
+      {apiTargetingSync && apiTotals && (
+        <div className="grid grid-cols-1 gap-x-6 gap-y-2 text-sm sm:grid-cols-2">
+          <div className="flex items-center justify-between border-b border-border-subtle pb-1.5">
+            <span className="text-navy-500">API Requested Period</span>
+            <span className="font-medium text-navy-900">{apiTargetingSync.meta.requestedPeriod?.start} → {apiTargetingSync.meta.requestedPeriod?.end}</span>
+          </div>
+          <div className="flex items-center justify-between border-b border-border-subtle pb-1.5">
+            <span className="text-navy-500">Targeting rows retrieved</span>
+            <span className="font-medium text-navy-900">{apiTargetingSync.rows.length}</span>
+          </div>
+          <div className="flex items-center justify-between border-b border-border-subtle pb-1.5">
+            <span className="text-navy-500">PPC Spend</span>
+            <span className="font-medium text-navy-900">{formatCurrency(apiTotals.spend)}</span>
+          </div>
+          <div className="flex items-center justify-between border-b border-border-subtle pb-1.5">
+            <span className="text-navy-500">Attributed Sales</span>
+            <span className="font-medium text-navy-900">{formatCurrency(apiTotals.sales)}</span>
+          </div>
+          <div className="flex items-center justify-between border-b border-border-subtle pb-1.5">
+            <span className="text-navy-500">Orders</span>
+            <span className="font-medium text-navy-900">{formatNumber(apiTotals.orders)}</span>
+          </div>
+          <div className="flex items-center justify-between border-b border-border-subtle pb-1.5">
+            <span className="text-navy-500">Last Targeting Sync</span>
+            <span className="font-medium text-navy-900">{syncStatus?.lastTargetingSync ?? '—'}</span>
+          </div>
+        </div>
+      )}
+
+      {targetingReconciliation && (
+        <div className="mt-3 flex items-center gap-2 text-sm">
+          <span className="text-navy-500">Reconciliation (Amazon API vs Manual Targeting CSV, same period)</span>
+          <Badge tone={RECONCILIATION_STATUS_TONE[targetingReconciliation]}>{RECONCILIATION_STATUS_LABEL[targetingReconciliation]}</Badge>
+        </div>
+      )}
+      {apiTargetingSync && reportMeta.targeting && !periodsMatch && (
+        <p className="mt-3 text-xs text-navy-500">Manual Targeting CSV and Amazon API data cover different periods — reconciliation only runs when both cover the exact same confirmed period.</p>
+      )}
+    </Card>
+  );
+}
+
 export function Settings() {
   const settings = useAppStore((s) => s.settings);
   const updateSettings = useAppStore((s) => s.updateSettings);
@@ -337,6 +532,7 @@ export function Settings() {
       <div className="space-y-6 p-8">
         <AmazonAdsApiCard />
         <CampaignSyncCard />
+        <TargetingSyncCard />
 
         <Card title="Strategy Posture & Bid Guardrails">
           <div className="grid grid-cols-2 gap-4 md:grid-cols-4">
