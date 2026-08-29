@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { runReconciliation, worstStatus, deriveDashboardReconciliationStatus } from './reconciliation';
+import { runReconciliation, worstStatus, deriveDashboardReconciliationStatus, reconcileCampaignSources } from './reconciliation';
 import type { ReconciliationInputs } from './reconciliation';
 import { importCampaignReport, importSellerboardProductReport } from '../parse/reportImporters';
 import { aggregateSellerboardProducts } from './sellerboard';
@@ -67,6 +67,53 @@ describe('runReconciliation — Sellerboard PPC spend sign normalization', () =>
       sellerboardPpcSpend: null,
     });
     expect(checks.find((c) => c.label === 'Campaign spend vs Sellerboard PPC spend')).toBeUndefined();
+  });
+});
+
+describe('reconcileCampaignSources — Amazon API vs manual Campaign CSV, same period', () => {
+  it('reports DATA_RECONCILED when both sources agree closely', () => {
+    const checks = reconcileCampaignSources(
+      { spend: 16.48, sales: 0, orders: 0, clicks: 12 },
+      { spend: 16.50, sales: 0, orders: 0, clicks: 12 },
+    );
+    expect(worstStatus(checks)).toBe('DATA_RECONCILED');
+  });
+
+  it('reports SMALL_ATTRIBUTION_DIFFERENCE for a moderate gap (reuses the same 5%/15% thresholds as every other reconciliation pair)', () => {
+    const checks = reconcileCampaignSources(
+      { spend: 100, sales: 0, orders: 0, clicks: 10 },
+      { spend: 108, sales: 0, orders: 0, clicks: 10 }, // 8% diff -> small, not a mismatch
+    );
+    expect(worstStatus(checks)).toBe('SMALL_ATTRIBUTION_DIFFERENCE');
+  });
+
+  it('reports DATA_MISMATCH_REVIEW_REQUIRED for a large gap and never silently picks a source', () => {
+    const checks = reconcileCampaignSources(
+      { spend: 100, sales: 500, orders: 20, clicks: 50 },
+      { spend: 40, sales: 500, orders: 20, clicks: 50 }, // 60% spend gap
+    );
+    expect(worstStatus(checks)).toBe('DATA_MISMATCH_REVIEW_REQUIRED');
+    const spendCheck = checks.find((c) => c.label.startsWith('Spend'));
+    expect(spendCheck?.a).toBe(40); // api value preserved, not overwritten
+    expect(spendCheck?.b).toBe(100); // manual value preserved, not overwritten
+  });
+
+  it('the exact reference scenario from Phase 2A (Aug 9-12): zero-sales, zero-orders reconciles cleanly when spend matches', () => {
+    const checks = reconcileCampaignSources(
+      { spend: 16.48, sales: 0, orders: 0, clicks: 20 },
+      { spend: 16.48, sales: 0, orders: 0, clicks: 20 },
+    );
+    expect(worstStatus(checks)).toBe('DATA_RECONCILED');
+    expect(checks.every((c) => c.status === 'DATA_RECONCILED')).toBe(true);
+  });
+
+  it('compares clicks and orders too, not only spend and sales', () => {
+    const checks = reconcileCampaignSources(
+      { spend: 50, sales: 200, orders: 10, clicks: 100 },
+      { spend: 50, sales: 200, orders: 2, clicks: 100 }, // orders wildly off
+    );
+    const ordersCheck = checks.find((c) => c.label.startsWith('Orders'));
+    expect(ordersCheck?.status).toBe('DATA_MISMATCH_REVIEW_REQUIRED');
   });
 });
 

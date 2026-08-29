@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, afterEach } from 'vitest';
-import { fetchAmazonStatus, testAmazonConnection } from './amazonBackend';
+import { fetchAmazonStatus, testAmazonConnection, fetchCampaignSyncStatus, syncCampaignData } from './amazonBackend';
 
 const originalFetch = globalThis.fetch;
 
@@ -61,5 +61,53 @@ describe('amazonBackend client -- never throws into the UI, never assumes the ba
     globalThis.fetch = vi.fn().mockResolvedValue({ ok: true, json: async () => real });
     const result = await testAmazonConnection();
     expect(result).toEqual(real);
+  });
+});
+
+describe('campaign sync client (Phase 2A) -- same graceful-failure guarantees', () => {
+  it('fetchCampaignSyncStatus returns a clear "not running" status when the backend is unreachable', async () => {
+    globalThis.fetch = vi.fn().mockRejectedValue(new Error('fetch failed'));
+    const status = await fetchCampaignSyncStatus();
+    expect(status.lastCampaignSync).toBeNull();
+    expect(status.lastSyncError).toMatch(/not running/);
+  });
+
+  it('syncCampaignData sends the exact startDate/endDate to its own local backend', async () => {
+    let capturedBody: string | undefined;
+    globalThis.fetch = vi.fn().mockImplementation(async (_url, opts) => {
+      capturedBody = opts?.body as string;
+      return { ok: true, json: async () => ({ success: true, rows: [] }) };
+    });
+    await syncCampaignData('2026-08-09', '2026-08-12');
+    const sent = JSON.parse(capturedBody!);
+    expect(sent).toEqual({ startDate: '2026-08-09', endDate: '2026-08-12' });
+  });
+
+  it('syncCampaignData returns success:false gracefully when the backend is unreachable, never throwing', async () => {
+    globalThis.fetch = vi.fn().mockRejectedValue(new Error('ECONNREFUSED'));
+    const result = await syncCampaignData('2026-08-09', '2026-08-12');
+    expect(result.success).toBe(false);
+    expect(result.error).toMatch(/not running/);
+  });
+
+  it('syncCampaignData passes through a real success response, including live campaign status, unchanged', async () => {
+    const real = {
+      success: true,
+      requestedPeriod: { start: '2026-08-09', end: '2026-08-12' },
+      rows: [{ campaign: 'Coconut - Sponsored Products', campaignId: '111', status: 'ENABLED', impressions: 500, clicks: 20, spend: 16.48, orders: 0, sales: 0 }],
+      campaignCount: 1,
+      performanceRowCount: 1,
+      syncedAt: '2026-08-29T00:00:00.000Z',
+    };
+    globalThis.fetch = vi.fn().mockResolvedValue({ ok: true, json: async () => real });
+    const result = await syncCampaignData('2026-08-09', '2026-08-12');
+    expect(result).toEqual(real);
+    expect(result.rows![0].status).toBe('ENABLED');
+  });
+
+  it('never includes a secret in a campaign sync response, even from a malformed backend body', async () => {
+    globalThis.fetch = vi.fn().mockResolvedValue({ ok: true, json: async () => ({ success: true, rows: [] }) });
+    const result = await syncCampaignData('2026-08-09', '2026-08-12');
+    expect(JSON.stringify(result)).not.toMatch(/secret/i);
   });
 });

@@ -700,6 +700,16 @@ export interface Settings {
   // (USD). Absent entries mean "no rate set yet" — display must show a
   // clear "set exchange rate" prompt rather than fabricate a number.
   exchangeRates: Record<string, number>;
+  // Which source the ACTIVE campaign-level data comes from — 'MANUAL' (the
+  // existing Amazon Campaign CSV/XLSX upload, via reportMeta.campaign/
+  // reportRows.campaign) or 'API' (an Amazon Ads API sync, stored
+  // separately in AppState.apiCampaignSync so it never overwrites or
+  // deletes manually-uploaded data). Defaults to 'MANUAL' so every
+  // existing installation's behavior is completely unchanged until a
+  // seller explicitly opts into API sync. Only ever affects which
+  // campaign-level rows useWorkspace() feeds into the existing,
+  // unmodified recommendation engine — never a second data model.
+  campaignDataSource: 'API' | 'MANUAL';
 }
 
 export const DEFAULT_SETTINGS: Settings = {
@@ -719,6 +729,7 @@ export const DEFAULT_SETTINGS: Settings = {
   currency: 'USD',
   displayCurrency: 'USD',
   exchangeRates: {},
+  campaignDataSource: 'MANUAL',
 };
 
 export const DEFAULT_PRODUCTS: Product[] = [

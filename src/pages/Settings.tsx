@@ -7,9 +7,13 @@ import type { BadgeTone } from '../components/ui/Badge';
 import { NumberField } from '../components/ui/NumberField';
 import { useAppStore } from '../state/store';
 import { useWorkspace } from '../state/useWorkspace';
-import { formatCurrency } from '../lib/engine/metrics';
-import { fetchAmazonStatus, testAmazonConnection, type AmazonConnectionStatus } from '../lib/amazonBackend';
-import type { Product, StrategyPosture } from '../types';
+import { formatCurrency, formatNumber } from '../lib/engine/metrics';
+import {
+  fetchAmazonStatus, testAmazonConnection, fetchCampaignSyncStatus, syncCampaignData,
+  type AmazonConnectionStatus, type CampaignSyncStatus,
+} from '../lib/amazonBackend';
+import { reconcileCampaignSources, worstStatus } from '../lib/aggregate/reconciliation';
+import type { CampaignRow, Product, ReconciliationStatus, ReportImportMeta, StrategyPosture } from '../types';
 
 const CONNECTION_TONE: Record<AmazonConnectionStatus['status'], BadgeTone> = {
   CONNECTED: 'positive',
@@ -91,6 +95,173 @@ function AmazonAdsApiCard() {
   );
 }
 
+const RECONCILIATION_STATUS_LABEL: Record<ReconciliationStatus, string> = {
+  DATA_RECONCILED: 'Data Reconciled',
+  SMALL_ATTRIBUTION_DIFFERENCE: 'Small Attribution Difference',
+  DATA_MISMATCH_REVIEW_REQUIRED: 'Data Mismatch — Review Required',
+};
+const RECONCILIATION_STATUS_TONE: Record<ReconciliationStatus, BadgeTone> = {
+  DATA_RECONCILED: 'positive',
+  SMALL_ATTRIBUTION_DIFFERENCE: 'watch',
+  DATA_MISMATCH_REVIEW_REQUIRED: 'negative',
+};
+
+interface CampaignTotals { spend: number; sales: number; orders: number; clicks: number }
+
+function sumCampaignRows(rows: CampaignRow[]): CampaignTotals {
+  return rows.reduce(
+    (a, r) => ({ spend: a.spend + r.spend, sales: a.sales + r.sales, orders: a.orders + r.orders, clicks: a.clicks + r.clicks }),
+    { spend: 0, sales: 0, orders: 0, clicks: 0 },
+  );
+}
+
+// Phase 2A: Sponsored Products campaign-level sync ONLY. Targeting, Search
+// Terms, and Advertised Products are not synced yet -- upload those
+// manually as usual. Never touches reportMeta.campaign/reportRows.campaign
+// (the manual CSV slot); stores results in the separate apiCampaignSync
+// slot instead (see state/store.ts).
+function CampaignSyncCard() {
+  const settings = useAppStore((s) => s.settings);
+  const updateSettings = useAppStore((s) => s.updateSettings);
+  const apiCampaignSync = useAppStore((s) => s.apiCampaignSync);
+  const setApiCampaignSync = useAppStore((s) => s.setApiCampaignSync);
+  const reportMeta = useAppStore((s) => s.reportMeta);
+  const reportRows = useAppStore((s) => s.reportRows);
+
+  const [startDate, setStartDate] = useState('');
+  const [endDate, setEndDate] = useState('');
+  const [syncing, setSyncing] = useState(false);
+  const [syncError, setSyncError] = useState<string | null>(null);
+  const [syncStatus, setSyncStatus] = useState<CampaignSyncStatus | null>(null);
+
+  useEffect(() => {
+    void fetchCampaignSyncStatus().then(setSyncStatus);
+  }, []);
+
+  async function handleSync() {
+    if (!startDate || !endDate) return;
+    setSyncing(true);
+    setSyncError(null);
+    try {
+      const result = await syncCampaignData(startDate, endDate);
+      if (!result.success || !result.rows) {
+        setSyncError(result.error ?? 'Campaign sync failed.');
+        return;
+      }
+      const requestedPeriod = result.requestedPeriod ?? { start: startDate, end: endDate };
+      const meta: ReportImportMeta = {
+        id: crypto.randomUUID(),
+        type: 'campaign',
+        filename: 'Amazon Ads API sync',
+        fileSizeBytes: 0,
+        rowCount: result.rows.length,
+        importedAt: new Date().toISOString(),
+        requestedPeriod,
+        observedPeriod: requestedPeriod,
+        periodConfirmedManually: true,
+        status: 'OK',
+        detectedColumns: ['campaignId', 'campaignName', 'state', 'budget', 'impressions', 'clicks', 'cost', 'purchases1d', 'sales1d'],
+        missingRequiredFields: [],
+        missingOptionalFields: [],
+      };
+      setApiCampaignSync(meta, result.rows as CampaignRow[]);
+      setSyncStatus(await fetchCampaignSyncStatus());
+    } finally {
+      setSyncing(false);
+    }
+  }
+
+  const apiTotals = apiCampaignSync ? sumCampaignRows(apiCampaignSync.rows) : null;
+
+  // Reconciliation only runs when a manual Campaign CSV AND an API sync
+  // both cover the exact same confirmed period -- never a "close enough"
+  // guess, and never silently overwrites either source.
+  const manualPeriod = reportMeta.campaign?.requestedPeriod ?? reportMeta.campaign?.observedPeriod ?? null;
+  const apiPeriod = apiCampaignSync?.meta.requestedPeriod ?? null;
+  const periodsMatch = !!(manualPeriod && apiPeriod && manualPeriod.start === apiPeriod.start && manualPeriod.end === apiPeriod.end);
+  const manualTotals = periodsMatch ? sumCampaignRows(reportRows.campaign) : null;
+  const campaignReconciliation = periodsMatch && manualTotals && apiTotals
+    ? worstStatus(reconcileCampaignSources(manualTotals, apiTotals))
+    : null;
+
+  return (
+    <Card
+      title="Amazon Campaign Data Sync"
+      subtitle="Sponsored Products campaign-level data only (Phase 2A). Targeting, Search Terms, and Advertised Products are not synced yet — upload those manually as usual."
+    >
+      <div className="mb-4 flex items-center gap-3 text-sm">
+        <span className="font-medium text-navy-600">Campaign Data Source</span>
+        <select
+          value={settings.campaignDataSource}
+          onChange={(e) => updateSettings({ campaignDataSource: e.target.value as 'API' | 'MANUAL' })}
+          className="rounded-lg border border-border-subtle px-2 py-1 text-sm"
+        >
+          <option value="MANUAL">Manual Report</option>
+          <option value="API">Amazon API</option>
+        </select>
+      </div>
+
+      <div className="mb-3 flex flex-wrap items-end gap-2">
+        <label className="block">
+          <span className="mb-1 block text-xs font-medium text-navy-600">Start Date</span>
+          <input type="date" value={startDate} onChange={(e) => setStartDate(e.target.value)} className="rounded-lg border border-border-subtle px-2 py-1.5 text-sm" />
+        </label>
+        <label className="block">
+          <span className="mb-1 block text-xs font-medium text-navy-600">End Date</span>
+          <input type="date" value={endDate} onChange={(e) => setEndDate(e.target.value)} className="rounded-lg border border-border-subtle px-2 py-1.5 text-sm" />
+        </label>
+        <button
+          onClick={handleSync}
+          disabled={syncing || !startDate || !endDate}
+          className="rounded-lg bg-brand-600 px-4 py-2 text-sm font-semibold text-white hover:bg-brand-700 disabled:cursor-not-allowed disabled:opacity-50"
+        >
+          {syncing ? 'Syncing…' : 'Sync Campaign Data'}
+        </button>
+      </div>
+      {syncError && <p className="mb-3 text-xs text-negative-600">{syncError}</p>}
+
+      {apiCampaignSync && apiTotals && (
+        <div className="grid grid-cols-1 gap-x-6 gap-y-2 text-sm sm:grid-cols-2">
+          <div className="flex items-center justify-between border-b border-border-subtle pb-1.5">
+            <span className="text-navy-500">API Requested Period</span>
+            <span className="font-medium text-navy-900">{apiCampaignSync.meta.requestedPeriod?.start} → {apiCampaignSync.meta.requestedPeriod?.end}</span>
+          </div>
+          <div className="flex items-center justify-between border-b border-border-subtle pb-1.5">
+            <span className="text-navy-500">Campaign rows retrieved</span>
+            <span className="font-medium text-navy-900">{apiCampaignSync.rows.length}</span>
+          </div>
+          <div className="flex items-center justify-between border-b border-border-subtle pb-1.5">
+            <span className="text-navy-500">PPC Spend</span>
+            <span className="font-medium text-navy-900">{formatCurrency(apiTotals.spend)}</span>
+          </div>
+          <div className="flex items-center justify-between border-b border-border-subtle pb-1.5">
+            <span className="text-navy-500">Attributed Sales</span>
+            <span className="font-medium text-navy-900">{formatCurrency(apiTotals.sales)}</span>
+          </div>
+          <div className="flex items-center justify-between border-b border-border-subtle pb-1.5">
+            <span className="text-navy-500">Orders</span>
+            <span className="font-medium text-navy-900">{formatNumber(apiTotals.orders)}</span>
+          </div>
+          <div className="flex items-center justify-between border-b border-border-subtle pb-1.5">
+            <span className="text-navy-500">Last Campaign Sync</span>
+            <span className="font-medium text-navy-900">{syncStatus?.lastCampaignSync ?? '—'}</span>
+          </div>
+        </div>
+      )}
+
+      {campaignReconciliation && (
+        <div className="mt-3 flex items-center gap-2 text-sm">
+          <span className="text-navy-500">Reconciliation (Amazon API vs Manual Campaign CSV, same period)</span>
+          <Badge tone={RECONCILIATION_STATUS_TONE[campaignReconciliation]}>{RECONCILIATION_STATUS_LABEL[campaignReconciliation]}</Badge>
+        </div>
+      )}
+      {apiCampaignSync && reportMeta.campaign && !periodsMatch && (
+        <p className="mt-3 text-xs text-navy-500">Manual Campaign CSV and Amazon API data cover different periods — reconciliation only runs when both cover the exact same confirmed period.</p>
+      )}
+    </Card>
+  );
+}
+
 export function Settings() {
   const settings = useAppStore((s) => s.settings);
   const updateSettings = useAppStore((s) => s.updateSettings);
@@ -112,6 +283,7 @@ export function Settings() {
       <PageHeader title="Settings" subtitle="All settings persist locally on this device." />
       <div className="space-y-6 p-8">
         <AmazonAdsApiCard />
+        <CampaignSyncCard />
 
         <Card title="Strategy Posture & Bid Guardrails">
           <div className="grid grid-cols-2 gap-4 md:grid-cols-4">

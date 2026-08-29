@@ -52,6 +52,31 @@ export function runReconciliation(inputs: ReconciliationInputs): ReconciliationC
   return checks;
 }
 
+// Compares Amazon API-synced campaign totals against manually-uploaded
+// Campaign CSV totals for the SAME confirmed period (see
+// state/store.ts's apiCampaignSync + reportMeta.campaign/reportRows.campaign,
+// and Settings.campaignDataSource). Reuses the exact same check()
+// tolerance logic as every other reconciliation pair above (5% = small
+// attribution difference, 15% = mismatch) — no new formula, no new
+// thresholds. Never called when the periods don't match exactly; that
+// decision is made by the caller, which only invokes this once both
+// sources cover the identical requested period.
+export interface CampaignSourceTotals {
+  spend: number;
+  sales: number;
+  orders: number;
+  clicks: number;
+}
+
+export function reconcileCampaignSources(manual: CampaignSourceTotals, api: CampaignSourceTotals): ReconciliationCheck[] {
+  return [
+    check('Spend: Amazon API vs Manual Campaign CSV', api.spend, manual.spend),
+    check('Attributed Sales: Amazon API vs Manual Campaign CSV', api.sales, manual.sales),
+    check('Orders: Amazon API vs Manual Campaign CSV', api.orders, manual.orders),
+    check('Clicks: Amazon API vs Manual Campaign CSV', api.clicks, manual.clicks),
+  ];
+}
+
 export function worstStatus(checks: ReconciliationCheck[]): ReconciliationStatus {
   if (checks.some((c) => c.status === 'DATA_MISMATCH_REVIEW_REQUIRED')) return 'DATA_MISMATCH_REVIEW_REQUIRED';
   if (checks.some((c) => c.status === 'SMALL_ATTRIBUTION_DIFFERENCE')) return 'SMALL_ATTRIBUTION_DIFFERENCE';

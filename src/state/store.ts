@@ -103,6 +103,14 @@ interface AppState {
   // marketplace/period is active — see lib/aggregate/customRangeFilter.ts.
   // Cleared automatically on any marketplace/period switch.
   customDateRange: DateRange | null;
+  // Campaign-level data retrieved via the Amazon Ads API (Phase 2A), kept
+  // entirely SEPARATE from reportMeta.campaign/reportRows.campaign (the
+  // manual Campaign CSV/XLSX slot) so neither source ever silently
+  // overwrites or deletes the other. Settings.campaignDataSource decides
+  // which one useWorkspace() actually feeds into the existing,
+  // unmodified recommendation engine. Same CampaignRow shape as the
+  // manual importer — no second data model.
+  apiCampaignSync: { meta: ReportImportMeta; rows: CampaignRow[] } | null;
   accountNetProfitByPeriod: Record<string, AccountNetProfitEntry>;
   shadowSnapshots: ShadowSnapshot[];
   deliveryWorkflow: Record<string, DeliveryWorkflowEntry>;
@@ -138,6 +146,11 @@ interface AppState {
   // reporting period instead of merging into whatever was already loaded.
   startNewReportingPeriod: () => void;
   setCustomDateRange: (range: DateRange | null) => void;
+  // Stores the result of an Amazon Ads API campaign sync. Never touches
+  // reportMeta.campaign/reportRows.campaign (the manual CSV slot) —
+  // purely additive/replacing within its own separate slot.
+  setApiCampaignSync: (meta: ReportImportMeta, rows: CampaignRow[]) => void;
+  clearApiCampaignSync: () => void;
   setAccountNetProfit: (period: DateRange, value: number) => void;
   saveShadowSnapshot: (s: ShadowSnapshot) => void;
   saveShadowSnapshotBatch: (snapshots: ShadowSnapshot[]) => void;
@@ -189,6 +202,7 @@ export const useAppStore = create<AppState>((set, get) => ({
   reportRows: EMPTY_ROWS,
   reportSnapshots: [],
   customDateRange: null,
+  apiCampaignSync: null,
   accountNetProfitByPeriod: {},
   shadowSnapshots: [],
   deliveryWorkflow: {},
@@ -197,7 +211,7 @@ export const useAppStore = create<AppState>((set, get) => ({
   heliumSources: [],
 
   hydrate: async () => {
-    const [settings, products, mappings, reports, anp, shadows, deliveryWf, manualKw, manualEcon, heliumSources, snapshotsPersisted, customRangePersisted] = await Promise.all([
+    const [settings, products, mappings, reports, anp, shadows, deliveryWf, manualKw, manualEcon, heliumSources, snapshotsPersisted, customRangePersisted, apiCampaignSyncPersisted] = await Promise.all([
       localDb.get<Settings>(DB_KEYS.settings),
       localDb.get<Product[]>(DB_KEYS.products),
       localDb.get<SavedAdGroupMapping[]>(DB_KEYS.savedAdGroupMappings),
@@ -210,6 +224,7 @@ export const useAppStore = create<AppState>((set, get) => ({
       localDb.get<HeliumImportSource[]>(DB_KEYS.heliumKeywordImport),
       localDb.get<ReportSnapshot[]>(DB_KEYS.reportSnapshots),
       localDb.get<DateRange | null>(DB_KEYS.customDateRange),
+      localDb.get<{ meta: ReportImportMeta; rows: CampaignRow[] } | null>(DB_KEYS.apiCampaignSync),
     ]);
 
     const reportMeta: AppState['reportMeta'] = {};
@@ -250,6 +265,7 @@ export const useAppStore = create<AppState>((set, get) => ({
       reportRows,
       reportSnapshots: resolvedSnapshots,
       customDateRange: customRangePersisted ?? null,
+      apiCampaignSync: apiCampaignSyncPersisted ?? null,
       accountNetProfitByPeriod: anp ?? {},
       shadowSnapshots: shadows ?? [],
       deliveryWorkflow: deliveryWf ?? {},
@@ -388,6 +404,16 @@ export const useAppStore = create<AppState>((set, get) => ({
     void localDb.set(DB_KEYS.customDateRange, range);
   },
 
+  setApiCampaignSync: (meta, rows) => {
+    const next = { meta, rows };
+    set({ apiCampaignSync: next });
+    void localDb.set(DB_KEYS.apiCampaignSync, next);
+  },
+  clearApiCampaignSync: () => {
+    set({ apiCampaignSync: null });
+    void localDb.set(DB_KEYS.apiCampaignSync, null);
+  },
+
   setAccountNetProfit: (period, value) => {
     const key = periodKey(period);
     const entry: AccountNetProfitEntry = { periodKey: key, period, accountNetProfit: value, enteredAt: new Date().toISOString() };
@@ -493,6 +519,7 @@ export const useAppStore = create<AppState>((set, get) => ({
       reportRows: EMPTY_ROWS,
       reportSnapshots: [],
       customDateRange: null,
+      apiCampaignSync: null,
       accountNetProfitByPeriod: {},
       shadowSnapshots: [],
       deliveryWorkflow: {},

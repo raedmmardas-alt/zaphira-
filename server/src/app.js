@@ -4,6 +4,7 @@
 import express from 'express';
 import cors from 'cors';
 import { amazonRouter } from './routes/amazon.js';
+import { campaignSyncRouter } from './routes/campaignSync.js';
 
 const LOCALHOST_ORIGIN = /^https?:\/\/(localhost|127\.0\.0\.1)(:\d+)?$/;
 
@@ -14,6 +15,7 @@ export function createApp() {
 
   app.get('/health', (_req, res) => res.json({ ok: true, readOnly: true }));
   app.use('/api/amazon', amazonRouter);
+  app.use('/api/amazon/campaigns', campaignSyncRouter);
 
   // Anything else -- deliberately a 404, not a catch-all proxy. This
   // backend exposes exactly the routes in routes/amazon.js and nothing else.

@@ -22,4 +22,5 @@ export const DB_KEYS = {
   heliumKeywordImport: 'zaphira/heliumKeywordImport',
   reportSnapshots: 'zaphira/reportSnapshots',
   customDateRange: 'zaphira/customDateRange',
+  apiCampaignSync: 'zaphira/apiCampaignSync',
 } as const;
