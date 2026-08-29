@@ -1,12 +1,95 @@
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 import { PageHeader } from '../components/ui/PageHeader';
 import { Card } from '../components/ui/Card';
 import { Table, Th, Td } from '../components/ui/Table';
+import { Badge } from '../components/ui/Badge';
+import type { BadgeTone } from '../components/ui/Badge';
 import { NumberField } from '../components/ui/NumberField';
 import { useAppStore } from '../state/store';
 import { useWorkspace } from '../state/useWorkspace';
 import { formatCurrency } from '../lib/engine/metrics';
+import { fetchAmazonStatus, testAmazonConnection, type AmazonConnectionStatus } from '../lib/amazonBackend';
 import type { Product, StrategyPosture } from '../types';
+
+const CONNECTION_TONE: Record<AmazonConnectionStatus['status'], BadgeTone> = {
+  CONNECTED: 'positive',
+  NOT_CONNECTED: 'wait',
+  ERROR: 'negative',
+};
+const CONNECTION_LABEL: Record<AmazonConnectionStatus['status'], string> = {
+  CONNECTED: 'Connected',
+  NOT_CONNECTED: 'Not Connected',
+  ERROR: 'Error',
+};
+
+function AmazonAdsApiCard() {
+  const [amazonStatus, setAmazonStatus] = useState<AmazonConnectionStatus | null>(null);
+  const [testing, setTesting] = useState(false);
+
+  useEffect(() => {
+    void fetchAmazonStatus().then(setAmazonStatus);
+  }, []);
+
+  async function handleTestConnection() {
+    setTesting(true);
+    try {
+      const result = await testAmazonConnection();
+      setAmazonStatus(result);
+    } finally {
+      setTesting(false);
+    }
+  }
+
+  return (
+    <Card title="Amazon Ads API" subtitle="Optional local integration — retrieves advertising data automatically instead of manual CSV downloads. Manual uploads always remain available.">
+      <div className="mb-3 rounded-lg border border-brand-600/20 bg-brand-50 px-3 py-2 text-xs text-brand-800">
+        <span className="font-semibold">READ-ONLY AMAZON CONNECTION</span> — Zaphira PPC Control cannot modify Amazon campaigns. This connection can only read advertising data; it can never create, pause, or edit a campaign, bid, budget, or keyword.
+      </div>
+      {amazonStatus ? (
+        <div className="grid grid-cols-1 gap-x-6 gap-y-2 text-sm sm:grid-cols-2">
+          <div className="flex items-center justify-between border-b border-border-subtle pb-1.5">
+            <span className="text-navy-500">Status</span>
+            <Badge tone={CONNECTION_TONE[amazonStatus.status]}>{CONNECTION_LABEL[amazonStatus.status]}</Badge>
+          </div>
+          <div className="flex items-center justify-between border-b border-border-subtle pb-1.5">
+            <span className="text-navy-500">Marketplace</span>
+            <span className="font-medium text-navy-900">{amazonStatus.marketplace ?? '—'}</span>
+          </div>
+          <div className="flex items-center justify-between border-b border-border-subtle pb-1.5">
+            <span className="text-navy-500">Profile ID</span>
+            <span className="font-mono text-xs text-navy-900">{amazonStatus.profileIdMasked ?? '—'}</span>
+          </div>
+          <div className="flex items-center justify-between border-b border-border-subtle pb-1.5">
+            <span className="text-navy-500">Token Refresh</span>
+            <span className="font-medium text-navy-900">{amazonStatus.tokenRefreshStatus.status}</span>
+          </div>
+          <div className="flex items-center justify-between border-b border-border-subtle pb-1.5">
+            <span className="text-navy-500">Last Successful Sync</span>
+            <span className="font-medium text-navy-900">{amazonStatus.lastSuccessfulSync ?? 'Never'}</span>
+          </div>
+          <div className="flex items-center justify-between border-b border-border-subtle pb-1.5">
+            <span className="text-navy-500">Last Sync Error</span>
+            <span className="max-w-[220px] truncate text-xs text-negative-600" title={amazonStatus.lastSyncError ?? undefined}>{amazonStatus.lastSyncError ?? 'None'}</span>
+          </div>
+        </div>
+      ) : (
+        <p className="text-sm text-navy-500">Checking connection…</p>
+      )}
+      {amazonStatus && !amazonStatus.configured && (
+        <p className="mt-3 text-xs text-navy-500">
+          Not set up yet. Run <code className="rounded bg-navy-900/5 px-1 py-0.5 font-mono">npm run setup</code> inside the <code className="rounded bg-navy-900/5 px-1 py-0.5 font-mono">server/</code> folder on your local machine, then <code className="rounded bg-navy-900/5 px-1 py-0.5 font-mono">npm start</code> to run the local backend.
+        </p>
+      )}
+      <button
+        onClick={handleTestConnection}
+        disabled={testing}
+        className="mt-4 rounded-lg bg-brand-600 px-4 py-2 text-sm font-semibold text-white hover:bg-brand-700 disabled:cursor-not-allowed disabled:opacity-50"
+      >
+        {testing ? 'Testing…' : 'Test Connection'}
+      </button>
+    </Card>
+  );
+}
 
 export function Settings() {
   const settings = useAppStore((s) => s.settings);
@@ -28,6 +111,8 @@ export function Settings() {
     <div>
       <PageHeader title="Settings" subtitle="All settings persist locally on this device." />
       <div className="space-y-6 p-8">
+        <AmazonAdsApiCard />
+
         <Card title="Strategy Posture & Bid Guardrails">
           <div className="grid grid-cols-2 gap-4 md:grid-cols-4">
             <label className="block">

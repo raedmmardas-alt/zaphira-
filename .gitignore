@@ -12,6 +12,13 @@ dist
 dist-ssr
 *.local
 
+# Amazon Ads API local backend secrets -- never commit. Already covered by
+# *.local above; listed explicitly too since this file holds a Client
+# Secret and refresh token and deserves an unambiguous, defense-in-depth
+# entry rather than relying solely on the general pattern matching it.
+.env.amazon.local
+server/.env.amazon.local
+
 # Editor directories and files
 .vscode/*
 !.vscode/extensions.json
