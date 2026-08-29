@@ -116,6 +116,9 @@ interface AppState {
   // (the manual Targeting CSV slot). Settings.targetingDataSource decides
   // which one useWorkspace() feeds into the existing, unmodified engine.
   apiTargetingSync: { meta: ReportImportMeta; rows: TargetingRow[] } | null;
+  // Same pattern (Phase 2C/2D), for search-term and advertised-product data.
+  apiSearchTermSync: { meta: ReportImportMeta; rows: SearchTermRow[] } | null;
+  apiAdvertisedProductSync: { meta: ReportImportMeta; rows: AdvertisedProductRow[] } | null;
   accountNetProfitByPeriod: Record<string, AccountNetProfitEntry>;
   shadowSnapshots: ShadowSnapshot[];
   deliveryWorkflow: Record<string, DeliveryWorkflowEntry>;
@@ -160,6 +163,10 @@ interface AppState {
   // reportMeta.targeting/reportRows.targeting (the manual CSV slot).
   setApiTargetingSync: (meta: ReportImportMeta, rows: TargetingRow[]) => void;
   clearApiTargetingSync: () => void;
+  setApiSearchTermSync: (meta: ReportImportMeta, rows: SearchTermRow[]) => void;
+  clearApiSearchTermSync: () => void;
+  setApiAdvertisedProductSync: (meta: ReportImportMeta, rows: AdvertisedProductRow[]) => void;
+  clearApiAdvertisedProductSync: () => void;
   setAccountNetProfit: (period: DateRange, value: number) => void;
   saveShadowSnapshot: (s: ShadowSnapshot) => void;
   saveShadowSnapshotBatch: (snapshots: ShadowSnapshot[]) => void;
@@ -213,6 +220,8 @@ export const useAppStore = create<AppState>((set, get) => ({
   customDateRange: null,
   apiCampaignSync: null,
   apiTargetingSync: null,
+  apiSearchTermSync: null,
+  apiAdvertisedProductSync: null,
   accountNetProfitByPeriod: {},
   shadowSnapshots: [],
   deliveryWorkflow: {},
@@ -221,7 +230,7 @@ export const useAppStore = create<AppState>((set, get) => ({
   heliumSources: [],
 
   hydrate: async () => {
-    const [settings, products, mappings, reports, anp, shadows, deliveryWf, manualKw, manualEcon, heliumSources, snapshotsPersisted, customRangePersisted, apiCampaignSyncPersisted, apiTargetingSyncPersisted] = await Promise.all([
+    const [settings, products, mappings, reports, anp, shadows, deliveryWf, manualKw, manualEcon, heliumSources, snapshotsPersisted, customRangePersisted, apiCampaignSyncPersisted, apiTargetingSyncPersisted, apiSearchTermSyncPersisted, apiAdvertisedProductSyncPersisted] = await Promise.all([
       localDb.get<Settings>(DB_KEYS.settings),
       localDb.get<Product[]>(DB_KEYS.products),
       localDb.get<SavedAdGroupMapping[]>(DB_KEYS.savedAdGroupMappings),
@@ -236,6 +245,8 @@ export const useAppStore = create<AppState>((set, get) => ({
       localDb.get<DateRange | null>(DB_KEYS.customDateRange),
       localDb.get<{ meta: ReportImportMeta; rows: CampaignRow[] } | null>(DB_KEYS.apiCampaignSync),
       localDb.get<{ meta: ReportImportMeta; rows: TargetingRow[] } | null>(DB_KEYS.apiTargetingSync),
+      localDb.get<{ meta: ReportImportMeta; rows: SearchTermRow[] } | null>(DB_KEYS.apiSearchTermSync),
+      localDb.get<{ meta: ReportImportMeta; rows: AdvertisedProductRow[] } | null>(DB_KEYS.apiAdvertisedProductSync),
     ]);
 
     const reportMeta: AppState['reportMeta'] = {};
@@ -278,6 +289,8 @@ export const useAppStore = create<AppState>((set, get) => ({
       customDateRange: customRangePersisted ?? null,
       apiCampaignSync: apiCampaignSyncPersisted ?? null,
       apiTargetingSync: apiTargetingSyncPersisted ?? null,
+      apiSearchTermSync: apiSearchTermSyncPersisted ?? null,
+      apiAdvertisedProductSync: apiAdvertisedProductSyncPersisted ?? null,
       accountNetProfitByPeriod: anp ?? {},
       shadowSnapshots: shadows ?? [],
       deliveryWorkflow: deliveryWf ?? {},
@@ -436,6 +449,26 @@ export const useAppStore = create<AppState>((set, get) => ({
     void localDb.set(DB_KEYS.apiTargetingSync, null);
   },
 
+  setApiSearchTermSync: (meta, rows) => {
+    const next = { meta, rows };
+    set({ apiSearchTermSync: next });
+    void localDb.set(DB_KEYS.apiSearchTermSync, next);
+  },
+  clearApiSearchTermSync: () => {
+    set({ apiSearchTermSync: null });
+    void localDb.set(DB_KEYS.apiSearchTermSync, null);
+  },
+
+  setApiAdvertisedProductSync: (meta, rows) => {
+    const next = { meta, rows };
+    set({ apiAdvertisedProductSync: next });
+    void localDb.set(DB_KEYS.apiAdvertisedProductSync, next);
+  },
+  clearApiAdvertisedProductSync: () => {
+    set({ apiAdvertisedProductSync: null });
+    void localDb.set(DB_KEYS.apiAdvertisedProductSync, null);
+  },
+
   setAccountNetProfit: (period, value) => {
     const key = periodKey(period);
     const entry: AccountNetProfitEntry = { periodKey: key, period, accountNetProfit: value, enteredAt: new Date().toISOString() };
@@ -543,6 +576,8 @@ export const useAppStore = create<AppState>((set, get) => ({
       customDateRange: null,
       apiCampaignSync: null,
       apiTargetingSync: null,
+      apiSearchTermSync: null,
+      apiAdvertisedProductSync: null,
       accountNetProfitByPeriod: {},
       shadowSnapshots: [],
       deliveryWorkflow: {},

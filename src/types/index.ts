@@ -717,6 +717,15 @@ export interface Settings {
   // engine (including NO DELIVERY/LOW DELIVERY thresholds) — never a
   // second data model.
   targetingDataSource: 'API' | 'MANUAL';
+  // Same pattern, for search-term-level rows (reportMeta.searchTerm/
+  // reportRows.searchTerm vs AppState.apiSearchTermSync). Search terms are
+  // period-performance data only — no live status concept applies.
+  searchTermDataSource: 'API' | 'MANUAL';
+  // Same pattern, for advertised-product-level rows
+  // (reportMeta.advertisedProduct/reportRows.advertisedProduct vs
+  // AppState.apiAdvertisedProductSync) — feeds the same product-mapping
+  // index (buildAdvertisedProductIndex) the manual report already does.
+  advertisedProductDataSource: 'API' | 'MANUAL';
 }
 
 export const DEFAULT_SETTINGS: Settings = {
@@ -738,6 +747,8 @@ export const DEFAULT_SETTINGS: Settings = {
   exchangeRates: {},
   campaignDataSource: 'MANUAL',
   targetingDataSource: 'MANUAL',
+  searchTermDataSource: 'MANUAL',
+  advertisedProductDataSource: 'MANUAL',
 };
 
 export const DEFAULT_PRODUCTS: Product[] = [

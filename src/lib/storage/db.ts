@@ -24,4 +24,6 @@ export const DB_KEYS = {
   customDateRange: 'zaphira/customDateRange',
   apiCampaignSync: 'zaphira/apiCampaignSync',
   apiTargetingSync: 'zaphira/apiTargetingSync',
+  apiSearchTermSync: 'zaphira/apiSearchTermSync',
+  apiAdvertisedProductSync: 'zaphira/apiAdvertisedProductSync',
 } as const;

@@ -2,6 +2,8 @@ import { describe, it, expect, vi, afterEach } from 'vitest';
 import {
   fetchAmazonStatus, testAmazonConnection, fetchCampaignSyncStatus, syncCampaignData,
   fetchTargetingSyncStatus, syncTargetingData, fetchTargetingSyncResult,
+  fetchSearchTermSyncStatus, syncSearchTermData, fetchSearchTermSyncResult,
+  fetchAdvertisedProductSyncStatus, syncAdvertisedProductData, fetchAdvertisedProductSyncResult,
 } from './amazonBackend';
 
 const originalFetch = globalThis.fetch;
@@ -182,6 +184,102 @@ describe('targeting sync client (Phase 2B) -- same graceful-failure guarantees',
   it('never includes a secret in a targeting sync response, even from a malformed backend body', async () => {
     globalThis.fetch = vi.fn().mockResolvedValue({ ok: true, json: async () => ({ success: true, rows: [] }) });
     const result = await syncTargetingData('2026-08-09', '2026-08-12');
+    expect(JSON.stringify(result)).not.toMatch(/secret/i);
+  });
+});
+
+describe('search term sync client (Phase 2C) -- same graceful-failure guarantees', () => {
+  it('fetchSearchTermSyncStatus returns a clear "not running" status when the backend is unreachable', async () => {
+    globalThis.fetch = vi.fn().mockRejectedValue(new Error('fetch failed'));
+    const status = await fetchSearchTermSyncStatus();
+    expect(status.lastSearchTermSync).toBeNull();
+    expect(status.lastSyncError).toMatch(/not running/);
+    expect(status.syncInProgress).toBe(false);
+  });
+
+  it('syncSearchTermData sends the exact startDate/endDate to its own local backend', async () => {
+    let capturedBody: string | undefined;
+    globalThis.fetch = vi.fn().mockImplementation(async (_url, opts) => {
+      capturedBody = opts?.body as string;
+      return { ok: true, json: async () => ({ success: true, pending: true }) };
+    });
+    await syncSearchTermData('2026-08-09', '2026-08-12');
+    const sent = JSON.parse(capturedBody!);
+    expect(sent).toEqual({ startDate: '2026-08-09', endDate: '2026-08-12' });
+  });
+
+  it('syncSearchTermData returns success:false gracefully when the backend is unreachable, never throwing', async () => {
+    globalThis.fetch = vi.fn().mockRejectedValue(new Error('ECONNREFUSED'));
+    const result = await syncSearchTermData('2026-08-09', '2026-08-12');
+    expect(result.success).toBe(false);
+    expect(result.error).toMatch(/not running/);
+  });
+
+  it('fetchSearchTermSyncResult passes through a real success response unchanged, including zero-sales rows', async () => {
+    const real = {
+      success: true,
+      requestedPeriod: { start: '2026-08-09', end: '2026-08-12' },
+      rows: [{ campaign: 'Coconut - Sponsored Products', adGroup: 'Coconut - Broad', searchTerm: 'organic coconut oil', targetingText: 'coconut oil', matchType: 'BROAD', impressions: 200, clicks: 9, spend: 6.2, orders: 0, sales: 0 }],
+      performanceRowCount: 1,
+      syncedAt: '2026-08-29T00:00:00.000Z',
+    };
+    globalThis.fetch = vi.fn().mockResolvedValue({ ok: true, json: async () => real });
+    const result = await fetchSearchTermSyncResult();
+    expect(result).toEqual(real);
+    expect(result.rows![0].sales).toBe(0);
+  });
+
+  it('never includes a secret in a search term sync response, even from a malformed backend body', async () => {
+    globalThis.fetch = vi.fn().mockResolvedValue({ ok: true, json: async () => ({ success: true, rows: [] }) });
+    const result = await syncSearchTermData('2026-08-09', '2026-08-12');
+    expect(JSON.stringify(result)).not.toMatch(/secret/i);
+  });
+});
+
+describe('advertised product sync client (Phase 2D) -- same graceful-failure guarantees', () => {
+  it('fetchAdvertisedProductSyncStatus returns a clear "not running" status when the backend is unreachable', async () => {
+    globalThis.fetch = vi.fn().mockRejectedValue(new Error('fetch failed'));
+    const status = await fetchAdvertisedProductSyncStatus();
+    expect(status.lastAdvertisedProductSync).toBeNull();
+    expect(status.lastSyncError).toMatch(/not running/);
+    expect(status.syncInProgress).toBe(false);
+  });
+
+  it('syncAdvertisedProductData sends the exact startDate/endDate to its own local backend', async () => {
+    let capturedBody: string | undefined;
+    globalThis.fetch = vi.fn().mockImplementation(async (_url, opts) => {
+      capturedBody = opts?.body as string;
+      return { ok: true, json: async () => ({ success: true, pending: true }) };
+    });
+    await syncAdvertisedProductData('2026-08-09', '2026-08-12');
+    const sent = JSON.parse(capturedBody!);
+    expect(sent).toEqual({ startDate: '2026-08-09', endDate: '2026-08-12' });
+  });
+
+  it('syncAdvertisedProductData returns success:false gracefully when the backend is unreachable, never throwing', async () => {
+    globalThis.fetch = vi.fn().mockRejectedValue(new Error('ECONNREFUSED'));
+    const result = await syncAdvertisedProductData('2026-08-09', '2026-08-12');
+    expect(result.success).toBe(false);
+    expect(result.error).toMatch(/not running/);
+  });
+
+  it('fetchAdvertisedProductSyncResult passes through a real success response unchanged', async () => {
+    const real = {
+      success: true,
+      requestedPeriod: { start: '2026-08-09', end: '2026-08-12' },
+      rows: [{ campaign: 'Coconut - Sponsored Products', adGroup: 'Coconut - Broad', asin: 'B0EXAMPLE123', sku: 'COCO-16OZ', impressions: 300, clicks: 15, spend: 9.5, orders: 2, sales: 39.98 }],
+      performanceRowCount: 1,
+      syncedAt: '2026-08-29T00:00:00.000Z',
+    };
+    globalThis.fetch = vi.fn().mockResolvedValue({ ok: true, json: async () => real });
+    const result = await fetchAdvertisedProductSyncResult();
+    expect(result).toEqual(real);
+    expect(result.rows![0].asin).toBe('B0EXAMPLE123');
+  });
+
+  it('never includes a secret in an advertised product sync response, even from a malformed backend body', async () => {
+    globalThis.fetch = vi.fn().mockResolvedValue({ ok: true, json: async () => ({ success: true, rows: [] }) });
+    const result = await syncAdvertisedProductData('2026-08-09', '2026-08-12');
     expect(JSON.stringify(result)).not.toMatch(/secret/i);
   });
 });

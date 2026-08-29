@@ -150,4 +150,50 @@ describe('syncTargetingData -- merges live keyword/target state with performance
     assert.equal(capturedStart, '2026-08-09');
     assert.equal(capturedEnd, '2026-08-12');
   });
+
+  test('a large live-inventory list with only a few active performance rows never fabricates activity for the rest, and never duplicates a performance row across multiple targets (regression for the real 1,664-row / $16.48-spend scenario)', async () => {
+    // Mirrors the real account shape reported after Phase 2B validation:
+    // live inventory is orders of magnitude larger than what actually had
+    // any activity in the selected period. Every zero-activity live
+    // target must retain exactly zero metrics -- current LIVE inventory
+    // and selected-period PERFORMANCE are two separate things that only
+    // ever get merged by exact id, never inferred from one another.
+    const liveTargets = [];
+    for (let i = 0; i < 200; i++) {
+      liveTargets.push({ id: String(i), campaignId: '111', adGroupId: '999', targetingText: `keyword ${i}`, matchType: 'BROAD', state: 'ENABLED', bid: 0.4 });
+    }
+    const deps = {
+      listSpTargeting: async () => liveTargets,
+      listSpCampaigns: async () => CAMPAIGNS,
+      listSpAdGroups: async () => AD_GROUPS,
+      // Only 2 of the 200 live targets had any activity in the period.
+      fetchTargetingPerformanceReport: async () => [
+        { keywordId: '17', impressions: 500, clicks: 20, cost: 12.4, purchases1d: 0, sales1d: 0 },
+        { keywordId: '42', impressions: 80, clicks: 3, cost: 4.08, purchases1d: 0, sales1d: 0 },
+      ],
+    };
+
+    const result = await syncTargetingData('2026-08-09', '2026-08-12', deps);
+    assert.equal(result.rows.length, 200); // every live target still gets a row
+    assert.equal(result.targetingCount, 200);
+
+    const totalSpend = result.rows.reduce((a, r) => a + r.spend, 0);
+    const totalImpressions = result.rows.reduce((a, r) => a + r.impressions, 0);
+    // Total spend across ALL 200 rows equals exactly the 2 active rows'
+    // combined spend -- no duplication, no fabricated activity on the
+    // other 198 zero-activity targets.
+    assert.equal(totalSpend, 16.48);
+    assert.equal(totalImpressions, 580);
+
+    const zeroActivityTargets = result.rows.filter((r) => r.targetingText !== 'keyword 17' && r.targetingText !== 'keyword 42');
+    assert.equal(zeroActivityTargets.length, 198);
+    for (const t of zeroActivityTargets) {
+      assert.equal(t.impressions, 0);
+      assert.equal(t.clicks, 0);
+      assert.equal(t.spend, 0);
+      assert.equal(t.orders, 0);
+      assert.equal(t.sales, 0);
+      assert.equal(t.status, 'ENABLED'); // live status still present despite zero period activity
+    }
+  });
 });

@@ -256,3 +256,183 @@ export async function fetchTargetingSyncResult(): Promise<TargetingSyncResult> {
     return { success: false, error: BACKEND_UNREACHABLE_TARGETING_SYNC_STATUS.lastSyncError! };
   }
 }
+
+// --- Search term sync (Phase 2C) ------------------------------------------
+
+export interface ApiSearchTermRow {
+  campaign: string;
+  adGroup: string;
+  searchTerm: string;
+  targetingText: string;
+  matchType: string;
+  impressions: number;
+  clicks: number;
+  spend: number;
+  orders: number;
+  sales: number;
+  activityStart?: string;
+  activityEnd?: string;
+}
+
+export interface SearchTermSyncStatus {
+  lastSearchTermSync: string | null;
+  lastRequestedPeriod: { start: string; end: string } | null;
+  lastRowCount: number | null;
+  lastSyncError: string | null;
+  syncInProgress: boolean;
+  reportId: string | null;
+  pollAttempts: number;
+  lastPolledStatus: string | null;
+}
+
+export interface SearchTermSyncResult {
+  success: boolean;
+  error?: string;
+  pending?: boolean;
+  message?: string;
+  requestedPeriod?: { start: string; end: string };
+  rows?: ApiSearchTermRow[];
+  performanceRowCount?: number;
+  syncedAt?: string;
+}
+
+const BACKEND_UNREACHABLE_SEARCH_TERM_SYNC_STATUS: SearchTermSyncStatus = {
+  lastSearchTermSync: null,
+  lastRequestedPeriod: null,
+  lastRowCount: null,
+  lastSyncError: 'Local Amazon Ads backend is not running. Start it with `npm start` inside the server/ folder.',
+  syncInProgress: false,
+  reportId: null,
+  pollAttempts: 0,
+  lastPolledStatus: null,
+};
+
+export async function fetchSearchTermSyncStatus(): Promise<SearchTermSyncStatus> {
+  try {
+    const res = await fetch(`${BACKEND_URL}/api/amazon/searchterms/status`);
+    if (!res.ok) return BACKEND_UNREACHABLE_SEARCH_TERM_SYNC_STATUS;
+    return (await res.json()) as SearchTermSyncStatus;
+  } catch {
+    return BACKEND_UNREACHABLE_SEARCH_TERM_SYNC_STATUS;
+  }
+}
+
+// Kicks off a Sponsored Products search term sync for [startDate, endDate]
+// (YYYY-MM-DD) and returns almost immediately with an acknowledgement --
+// it does NOT wait for Amazon's report to finish generating. Poll
+// fetchSearchTermSyncStatus() for live progress, then call
+// fetchSearchTermSyncResult() once syncInProgress is false. Read-only end
+// to end -- see server/src/routes/searchTermSync.js.
+export async function syncSearchTermData(startDate: string, endDate: string): Promise<SearchTermSyncResult> {
+  try {
+    const res = await fetch(`${BACKEND_URL}/api/amazon/searchterms/sync`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ startDate, endDate }),
+    });
+    if (!res.ok) return { success: false, error: BACKEND_UNREACHABLE_SEARCH_TERM_SYNC_STATUS.lastSyncError! };
+    return (await res.json()) as SearchTermSyncResult;
+  } catch {
+    return { success: false, error: BACKEND_UNREACHABLE_SEARCH_TERM_SYNC_STATUS.lastSyncError! };
+  }
+}
+
+export async function fetchSearchTermSyncResult(): Promise<SearchTermSyncResult> {
+  try {
+    const res = await fetch(`${BACKEND_URL}/api/amazon/searchterms/result`);
+    if (!res.ok) return { success: false, error: BACKEND_UNREACHABLE_SEARCH_TERM_SYNC_STATUS.lastSyncError! };
+    return (await res.json()) as SearchTermSyncResult;
+  } catch {
+    return { success: false, error: BACKEND_UNREACHABLE_SEARCH_TERM_SYNC_STATUS.lastSyncError! };
+  }
+}
+
+// --- Advertised product sync (Phase 2D) ------------------------------------
+
+export interface ApiAdvertisedProductRow {
+  campaign: string;
+  adGroup: string;
+  asin: string;
+  sku?: string;
+  impressions: number;
+  clicks: number;
+  spend: number;
+  orders: number;
+  sales: number;
+  activityStart?: string;
+  activityEnd?: string;
+}
+
+export interface AdvertisedProductSyncStatus {
+  lastAdvertisedProductSync: string | null;
+  lastRequestedPeriod: { start: string; end: string } | null;
+  lastRowCount: number | null;
+  lastSyncError: string | null;
+  syncInProgress: boolean;
+  reportId: string | null;
+  pollAttempts: number;
+  lastPolledStatus: string | null;
+}
+
+export interface AdvertisedProductSyncResult {
+  success: boolean;
+  error?: string;
+  pending?: boolean;
+  message?: string;
+  requestedPeriod?: { start: string; end: string };
+  rows?: ApiAdvertisedProductRow[];
+  performanceRowCount?: number;
+  syncedAt?: string;
+}
+
+const BACKEND_UNREACHABLE_ADVERTISED_PRODUCT_SYNC_STATUS: AdvertisedProductSyncStatus = {
+  lastAdvertisedProductSync: null,
+  lastRequestedPeriod: null,
+  lastRowCount: null,
+  lastSyncError: 'Local Amazon Ads backend is not running. Start it with `npm start` inside the server/ folder.',
+  syncInProgress: false,
+  reportId: null,
+  pollAttempts: 0,
+  lastPolledStatus: null,
+};
+
+export async function fetchAdvertisedProductSyncStatus(): Promise<AdvertisedProductSyncStatus> {
+  try {
+    const res = await fetch(`${BACKEND_URL}/api/amazon/advertisedproducts/status`);
+    if (!res.ok) return BACKEND_UNREACHABLE_ADVERTISED_PRODUCT_SYNC_STATUS;
+    return (await res.json()) as AdvertisedProductSyncStatus;
+  } catch {
+    return BACKEND_UNREACHABLE_ADVERTISED_PRODUCT_SYNC_STATUS;
+  }
+}
+
+// Kicks off a Sponsored Products advertised product sync for [startDate,
+// endDate] (YYYY-MM-DD) and returns almost immediately with an
+// acknowledgement -- it does NOT wait for Amazon's report to finish
+// generating. Poll fetchAdvertisedProductSyncStatus() for live progress,
+// then call fetchAdvertisedProductSyncResult() once syncInProgress is
+// false. Read-only end to end -- see
+// server/src/routes/advertisedProductSync.js.
+export async function syncAdvertisedProductData(startDate: string, endDate: string): Promise<AdvertisedProductSyncResult> {
+  try {
+    const res = await fetch(`${BACKEND_URL}/api/amazon/advertisedproducts/sync`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ startDate, endDate }),
+    });
+    if (!res.ok) return { success: false, error: BACKEND_UNREACHABLE_ADVERTISED_PRODUCT_SYNC_STATUS.lastSyncError! };
+    return (await res.json()) as AdvertisedProductSyncResult;
+  } catch {
+    return { success: false, error: BACKEND_UNREACHABLE_ADVERTISED_PRODUCT_SYNC_STATUS.lastSyncError! };
+  }
+}
+
+export async function fetchAdvertisedProductSyncResult(): Promise<AdvertisedProductSyncResult> {
+  try {
+    const res = await fetch(`${BACKEND_URL}/api/amazon/advertisedproducts/result`);
+    if (!res.ok) return { success: false, error: BACKEND_UNREACHABLE_ADVERTISED_PRODUCT_SYNC_STATUS.lastSyncError! };
+    return (await res.json()) as AdvertisedProductSyncResult;
+  } catch {
+    return { success: false, error: BACKEND_UNREACHABLE_ADVERTISED_PRODUCT_SYNC_STATUS.lastSyncError! };
+  }
+}
