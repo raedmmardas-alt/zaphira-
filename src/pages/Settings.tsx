@@ -9,7 +9,7 @@ import { useAppStore } from '../state/store';
 import { useWorkspace } from '../state/useWorkspace';
 import { formatCurrency, formatNumber } from '../lib/engine/metrics';
 import {
-  fetchAmazonStatus, testAmazonConnection, fetchCampaignSyncStatus, syncCampaignData,
+  fetchAmazonStatus, testAmazonConnection, fetchCampaignSyncStatus, syncCampaignData, fetchCampaignSyncResult,
   type AmazonConnectionStatus, type CampaignSyncStatus,
 } from '../lib/amazonBackend';
 import { reconcileCampaignSources, worstStatus } from '../lib/aggregate/reconciliation';
@@ -134,8 +134,65 @@ function CampaignSyncCard() {
   const [syncError, setSyncError] = useState<string | null>(null);
   const [syncStatus, setSyncStatus] = useState<CampaignSyncStatus | null>(null);
 
+  // Watches an already-kicked-off background sync to completion and
+  // applies its result. Amazon's own report generation can legitimately
+  // take minutes up to a few hours (see server/src/amazonReporting.js),
+  // so this is reused both right after starting a sync and on mount --
+  // reopening this page mid-sync (or after it finished while the tab was
+  // closed) resumes tracking it rather than leaving the UI stuck showing
+  // nothing happened.
+  async function watchUntilDone(fallbackPeriod: { start: string; end: string }) {
+    let status = await fetchCampaignSyncStatus();
+    setSyncStatus(status);
+    // Bounded purely as defensive coding -- the backend's own safety
+    // ceiling (see amazonReporting.js) will flip syncInProgress to false
+    // with a clear error well before this could ever run out.
+    let safety = 0;
+    while (status.syncInProgress && safety < 4000) {
+      await new Promise((resolve) => setTimeout(resolve, 4000));
+      status = await fetchCampaignSyncStatus();
+      setSyncStatus(status);
+      safety += 1;
+    }
+
+    if (status.lastSyncError) {
+      setSyncError(status.lastSyncError);
+      return;
+    }
+
+    const result = await fetchCampaignSyncResult();
+    if (!result.success || !result.rows) return; // nothing new to apply
+
+    const requestedPeriod = result.requestedPeriod ?? fallbackPeriod;
+    const meta: ReportImportMeta = {
+      id: crypto.randomUUID(),
+      type: 'campaign',
+      filename: 'Amazon Ads API sync',
+      fileSizeBytes: 0,
+      rowCount: result.rows.length,
+      importedAt: new Date().toISOString(),
+      requestedPeriod,
+      observedPeriod: requestedPeriod,
+      periodConfirmedManually: true,
+      status: 'OK',
+      detectedColumns: ['campaignId', 'campaignName', 'state', 'budget', 'impressions', 'clicks', 'cost', 'purchases1d', 'sales1d'],
+      missingRequiredFields: [],
+      missingOptionalFields: [],
+    };
+    setApiCampaignSync(meta, result.rows as CampaignRow[]);
+  }
+
   useEffect(() => {
-    void fetchCampaignSyncStatus().then(setSyncStatus);
+    void fetchCampaignSyncStatus().then((status) => {
+      setSyncStatus(status);
+      // Resume watching a sync that was already running when this page
+      // loaded (e.g. the user navigated away and came back).
+      if (status.syncInProgress && status.lastRequestedPeriod) {
+        setSyncing(true);
+        void watchUntilDone(status.lastRequestedPeriod).finally(() => setSyncing(false));
+      }
+    });
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
   async function handleSync() {
@@ -143,29 +200,18 @@ function CampaignSyncCard() {
     setSyncing(true);
     setSyncError(null);
     try {
-      const result = await syncCampaignData(startDate, endDate);
-      if (!result.success || !result.rows) {
-        setSyncError(result.error ?? 'Campaign sync failed.');
+      // The backend kicks off the Amazon report and returns almost
+      // immediately -- it does NOT wait for Amazon to finish generating
+      // it. This call only ever fails fast for validation errors, an
+      // already-in-progress sync, missing credentials, or an unreachable
+      // backend; a real sync attempt returns pending:true here and then
+      // runs in the background, tracked by watchUntilDone below.
+      const kickoff = await syncCampaignData(startDate, endDate);
+      if (!kickoff.success) {
+        setSyncError(kickoff.error ?? 'Campaign sync failed.');
         return;
       }
-      const requestedPeriod = result.requestedPeriod ?? { start: startDate, end: endDate };
-      const meta: ReportImportMeta = {
-        id: crypto.randomUUID(),
-        type: 'campaign',
-        filename: 'Amazon Ads API sync',
-        fileSizeBytes: 0,
-        rowCount: result.rows.length,
-        importedAt: new Date().toISOString(),
-        requestedPeriod,
-        observedPeriod: requestedPeriod,
-        periodConfirmedManually: true,
-        status: 'OK',
-        detectedColumns: ['campaignId', 'campaignName', 'state', 'budget', 'impressions', 'clicks', 'cost', 'purchases1d', 'sales1d'],
-        missingRequiredFields: [],
-        missingOptionalFields: [],
-      };
-      setApiCampaignSync(meta, result.rows as CampaignRow[]);
-      setSyncStatus(await fetchCampaignSyncStatus());
+      await watchUntilDone({ start: startDate, end: endDate });
     } finally {
       setSyncing(false);
     }
@@ -220,7 +266,9 @@ function CampaignSyncCard() {
       </div>
       {(syncing || syncStatus?.syncInProgress) && (
         <p className="mb-3 text-xs text-navy-500">
-          Amazon is generating the report… this can take up to a few minutes. Please don't close this tab.
+          Amazon is generating the report… this can take a few minutes up to a few hours.
+          {syncStatus?.lastPolledStatus && ` Amazon status: ${syncStatus.lastPolledStatus} (check ${syncStatus.pollAttempts}).`}
+          {' '}You can leave this page — sync continues in the background.
         </p>
       )}
       {syncError && <p className="mb-3 text-xs text-negative-600">{syncError}</p>}

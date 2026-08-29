@@ -85,11 +85,20 @@ export interface CampaignSyncStatus {
   lastRowCount: number | null;
   lastSyncError: string | null;
   syncInProgress: boolean;
+  // Live progress while a sync is running in the backend's background
+  // poller -- Amazon's own report generation can take minutes to hours,
+  // so POST /sync returns immediately and these fields are how the UI
+  // shows real movement instead of a blocking spinner.
+  reportId: string | null;
+  pollAttempts: number;
+  lastPolledStatus: string | null;
 }
 
 export interface CampaignSyncResult {
   success: boolean;
   error?: string;
+  pending?: boolean;
+  message?: string;
   requestedPeriod?: { start: string; end: string };
   rows?: ApiCampaignRow[];
   campaignCount?: number;
@@ -103,6 +112,9 @@ const BACKEND_UNREACHABLE_CAMPAIGN_SYNC_STATUS: CampaignSyncStatus = {
   lastRowCount: null,
   lastSyncError: 'Local Amazon Ads backend is not running. Start it with `npm start` inside the server/ folder.',
   syncInProgress: false,
+  reportId: null,
+  pollAttempts: 0,
+  lastPolledStatus: null,
 };
 
 export async function fetchCampaignSyncStatus(): Promise<CampaignSyncStatus> {
@@ -115,8 +127,13 @@ export async function fetchCampaignSyncStatus(): Promise<CampaignSyncStatus> {
   }
 }
 
-// Requests a Sponsored Products campaign sync for [startDate, endDate]
-// (YYYY-MM-DD). Read-only end to end -- see server/src/routes/campaignSync.js.
+// Kicks off a Sponsored Products campaign sync for [startDate, endDate]
+// (YYYY-MM-DD) and returns almost immediately with an acknowledgement --
+// it does NOT wait for Amazon's report to finish generating (that can
+// take minutes to hours; see server/src/amazonReporting.js). Poll
+// fetchCampaignSyncStatus() for live progress, then call
+// fetchCampaignSyncResult() once syncInProgress is false. Read-only end
+// to end -- see server/src/routes/campaignSync.js.
 export async function syncCampaignData(startDate: string, endDate: string): Promise<CampaignSyncResult> {
   try {
     const res = await fetch(`${BACKEND_URL}/api/amazon/campaigns/sync`, {
@@ -124,6 +141,19 @@ export async function syncCampaignData(startDate: string, endDate: string): Prom
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ startDate, endDate }),
     });
+    if (!res.ok) return { success: false, error: BACKEND_UNREACHABLE_CAMPAIGN_SYNC_STATUS.lastSyncError! };
+    return (await res.json()) as CampaignSyncResult;
+  } catch {
+    return { success: false, error: BACKEND_UNREACHABLE_CAMPAIGN_SYNC_STATUS.lastSyncError! };
+  }
+}
+
+// Fetches the most recently completed background sync's normalized rows.
+// Call this once fetchCampaignSyncStatus() reports syncInProgress:false
+// with no lastSyncError.
+export async function fetchCampaignSyncResult(): Promise<CampaignSyncResult> {
+  try {
+    const res = await fetch(`${BACKEND_URL}/api/amazon/campaigns/result`);
     if (!res.ok) return { success: false, error: BACKEND_UNREACHABLE_CAMPAIGN_SYNC_STATUS.lastSyncError! };
     return (await res.json()) as CampaignSyncResult;
   } catch {

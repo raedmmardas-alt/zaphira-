@@ -3,7 +3,7 @@ import assert from 'node:assert/strict';
 import zlib from 'node:zlib';
 
 process.env.AMAZON_REPORT_POLL_INTERVAL_MS = '5';
-process.env.AMAZON_REPORT_TIMEOUT_MS = '150';
+process.env.AMAZON_REPORT_MAX_POLL_MS = '150';
 process.env.AMAZON_ADS_CLIENT_ID = 'test-client-id';
 process.env.AMAZON_ADS_CLIENT_SECRET = 'super-secret-value';
 process.env.AMAZON_ADS_REFRESH_TOKEN = 'refresh-token-value';
@@ -55,9 +55,9 @@ function mockAmazonFetch({ reportRows, reportStatusSequence } = {}) {
       const status = statuses[Math.min(statusCallIndex, statuses.length - 1)];
       statusCallIndex++;
       if (status === 'COMPLETED') {
-        return { ok: true, text: async () => JSON.stringify({ status: 'COMPLETED', url: 'https://fake-s3.example.com/report.json.gz' }) };
+        return { ok: true, status: 200, text: async () => JSON.stringify({ status: 'COMPLETED', url: 'https://fake-s3.example.com/report.json.gz' }) };
       }
-      return { ok: true, text: async () => JSON.stringify({ status }) };
+      return { ok: true, status: 200, text: async () => JSON.stringify({ status }) };
     }
     if (s === 'https://fake-s3.example.com/report.json.gz') {
       const buf = gzipReportPayload(rows);
@@ -67,6 +67,38 @@ function mockAmazonFetch({ reportRows, reportStatusSequence } = {}) {
   };
 
   return calls;
+}
+
+async function postSync(payload) {
+  const res = await fetch(`${baseUrl}/api/amazon/campaigns/sync`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(payload),
+  });
+  return { res, body: await res.json() };
+}
+
+async function getStatus() {
+  return (await fetch(`${baseUrl}/api/amazon/campaigns/status`)).json();
+}
+
+async function getResult() {
+  return (await fetch(`${baseUrl}/api/amazon/campaigns/result`)).json();
+}
+
+// POST /sync no longer waits for Amazon -- it kicks off the background
+// sync and returns immediately (see routes/campaignSync.js). Tests poll
+// this lightweight, local-only status endpoint to know when the
+// background work has finished, exactly like the real frontend does.
+async function waitForSyncToFinish({ intervalMs = 5, maxWaitMs = 5000 } = {}) {
+  const deadline = Date.now() + maxWaitMs;
+  let status = await getStatus();
+  while (status.syncInProgress) {
+    if (Date.now() > deadline) throw new Error('Test timed out waiting for the background sync to finish.');
+    await new Promise((resolve) => setTimeout(resolve, intervalMs));
+    status = await getStatus();
+  }
+  return status;
 }
 
 beforeEach(async () => {
@@ -88,48 +120,46 @@ after(() => {
   globalThis.fetch = originalFetch;
 });
 
-describe('POST /api/amazon/campaigns/sync -- success', () => {
-  test('returns normalized campaign rows for the requested period', async () => {
+describe('POST /api/amazon/campaigns/sync -- returns immediately, runs in the background', () => {
+  test('acknowledges the sync request right away without waiting for Amazon', async () => {
     mockAmazonFetch();
-
-    const res = await fetch(`${baseUrl}/api/amazon/campaigns/sync`, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ startDate: '2026-08-09', endDate: '2026-08-12' }),
-    });
-    const body = await res.json();
-
+    const { res, body } = await postSync({ startDate: '2026-08-09', endDate: '2026-08-12' });
+    assert.equal(res.status, 202);
     assert.equal(body.success, true);
+    assert.equal(body.pending, true);
     assert.deepEqual(body.requestedPeriod, { start: '2026-08-09', end: '2026-08-12' });
-    assert.equal(body.rows.length, 2);
-    assert.equal(body.campaignCount, 2);
-    const coconut = body.rows.find((r) => r.campaignId === '111111111111111');
+    assert.equal(body.rows, undefined, 'rows must not be returned synchronously -- they arrive via GET /result once ready');
+    await waitForSyncToFinish();
+  });
+
+  test('normalizes campaign rows for the requested period, retrievable via GET /result once the background sync completes', async () => {
+    mockAmazonFetch();
+    await postSync({ startDate: '2026-08-09', endDate: '2026-08-12' });
+    const status = await waitForSyncToFinish();
+    assert.equal(status.lastSyncError, null);
+
+    const result = await getResult();
+    assert.equal(result.success, true);
+    assert.deepEqual(result.requestedPeriod, { start: '2026-08-09', end: '2026-08-12' });
+    assert.equal(result.rows.length, 2);
+    assert.equal(result.campaignCount, 2);
+    const coconut = result.rows.find((r) => r.campaignId === '111111111111111');
     assert.equal(coconut.spend, 16.48);
     assert.equal(coconut.status, 'ENABLED');
   });
 
-  test('token refresh happens as part of the sync flow', async () => {
+  test('token refresh happens as part of the background sync', async () => {
     mockAmazonFetch();
     assert.equal(getTokenRefreshStatus().status, 'NOT_YET_REFRESHED');
-
-    const res = await fetch(`${baseUrl}/api/amazon/campaigns/sync`, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ startDate: '2026-08-09', endDate: '2026-08-12' }),
-    });
-    await res.json();
-
+    await postSync({ startDate: '2026-08-09', endDate: '2026-08-12' });
+    await waitForSyncToFinish();
     assert.equal(getTokenRefreshStatus().status, 'OK');
   });
 
   test('the exact requested date range is sent to Amazon\'s reporting endpoint', async () => {
     const calls = mockAmazonFetch();
-
-    await fetch(`${baseUrl}/api/amazon/campaigns/sync`, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ startDate: '2026-08-09', endDate: '2026-08-12' }),
-    });
+    await postSync({ startDate: '2026-08-09', endDate: '2026-08-12' });
+    await waitForSyncToFinish();
 
     const reportRequestCall = calls.find((c) => c.url.endsWith('/reporting/reports') && c.method === 'POST');
     assert.ok(reportRequestCall, 'expected a POST to /reporting/reports');
@@ -138,28 +168,26 @@ describe('POST /api/amazon/campaigns/sync -- success', () => {
     assert.equal(sentBody.endDate, '2026-08-12');
   });
 
-  test('waits through several PENDING/PROCESSING polls before returning the completed report, without failing early', async () => {
+  test('waits through several PENDING/PROCESSING polls before completing, without failing early, and GET /status shows live progress', async () => {
     mockAmazonFetch({ reportStatusSequence: ['PENDING', 'PENDING', 'PROCESSING', 'PROCESSING', 'COMPLETED'] });
+    await postSync({ startDate: '2026-08-09', endDate: '2026-08-12' });
 
-    const res = await fetch(`${baseUrl}/api/amazon/campaigns/sync`, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ startDate: '2026-08-09', endDate: '2026-08-12' }),
-    });
-    const body = await res.json();
-    assert.equal(body.success, true);
+    // Catch it mid-flight at least once -- proving polling actually
+    // happens in the background rather than failing early.
+    await new Promise((resolve) => setTimeout(resolve, 30));
+    const midStatus = await getStatus();
+    assert.ok(midStatus.pollAttempts >= 1, `expected at least one poll to have happened by now (got ${midStatus.pollAttempts})`);
+    assert.equal(midStatus.reportId, 'report-123');
+
+    const finalStatus = await waitForSyncToFinish();
+    assert.equal(finalStatus.lastSyncError, null);
+    assert.equal(finalStatus.lastPolledStatus, 'COMPLETED');
   });
 
   test('requests the report exactly once no matter how many status polls it takes to complete', async () => {
     const calls = mockAmazonFetch({ reportStatusSequence: ['PENDING', 'PENDING', 'PROCESSING', 'PROCESSING', 'PROCESSING', 'COMPLETED'] });
-
-    const res = await fetch(`${baseUrl}/api/amazon/campaigns/sync`, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ startDate: '2026-08-09', endDate: '2026-08-12' }),
-    });
-    const body = await res.json();
-    assert.equal(body.success, true);
+    await postSync({ startDate: '2026-08-09', endDate: '2026-08-12' });
+    await waitForSyncToFinish();
 
     const reportCreationCalls = calls.filter((c) => c.url.endsWith('/reporting/reports') && c.method === 'POST');
     assert.equal(reportCreationCalls.length, 1, 'expected exactly one report-generation request, never a new report per poll');
@@ -170,35 +198,25 @@ describe('POST /api/amazon/campaigns/sync -- success', () => {
 
   test('GET /api/amazon/campaigns/status reflects the last successful sync', async () => {
     mockAmazonFetch();
-    await fetch(`${baseUrl}/api/amazon/campaigns/sync`, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ startDate: '2026-08-09', endDate: '2026-08-12' }),
-    });
+    await postSync({ startDate: '2026-08-09', endDate: '2026-08-12' });
+    const status = await waitForSyncToFinish();
 
-    const res = await fetch(`${baseUrl}/api/amazon/campaigns/status`);
-    const body = await res.json();
-    assert.ok(body.lastCampaignSync);
-    assert.deepEqual(body.lastRequestedPeriod, { start: '2026-08-09', end: '2026-08-12' });
-    assert.equal(body.lastRowCount, 2);
-    assert.equal(body.lastSyncError, null);
+    assert.ok(status.lastCampaignSync);
+    assert.deepEqual(status.lastRequestedPeriod, { start: '2026-08-09', end: '2026-08-12' });
+    assert.equal(status.lastRowCount, 2);
+    assert.equal(status.lastSyncError, null);
   });
 });
 
 describe('POST /api/amazon/campaigns/sync -- validation and failure handling', () => {
   test('rejects an invalid date range without calling Amazon at all', async () => {
     const calls = mockAmazonFetch();
-    const res = await fetch(`${baseUrl}/api/amazon/campaigns/sync`, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ startDate: '2026-08-12', endDate: '2026-08-09' }), // end before start
-    });
-    const body = await res.json();
+    const { body } = await postSync({ startDate: '2026-08-12', endDate: '2026-08-09' }); // end before start
     assert.equal(body.success, false);
     assert.equal(calls.length, 0);
   });
 
-  test('a report generation failure surfaces a clear error and never includes a secret', async () => {
+  test('a report generation failure surfaces a clear error via status, and never includes a secret', async () => {
     globalThis.fetch = async (url, opts) => {
       const s = String(url);
       if (s.includes('/auth/o2/token')) return { ok: true, json: async () => ({ access_token: 'tok', expires_in: 3600 }) };
@@ -208,48 +226,45 @@ describe('POST /api/amazon/campaigns/sync -- validation and failure handling', (
       return originalFetch(url, opts);
     };
 
-    const res = await fetch(`${baseUrl}/api/amazon/campaigns/sync`, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ startDate: '2026-08-09', endDate: '2026-08-12' }),
-    });
-    const body = await res.json();
-    assert.equal(body.success, false);
-    assert.match(body.error, /INTERNAL_ERROR/);
-    assert.ok(!JSON.stringify(body).includes('super-secret-value'));
+    await postSync({ startDate: '2026-08-09', endDate: '2026-08-12' });
+    const status = await waitForSyncToFinish();
+    assert.match(status.lastSyncError, /INTERNAL_ERROR/);
+    assert.ok(!JSON.stringify(status).includes('super-secret-value'));
   });
 
-  test('gives up and reports a clear timeout error if the report never finishes generating, without hanging forever', async () => {
+  test('an unrecognized/undocumented Amazon status is never treated as failure or success -- polling continues safely', async () => {
+    // Guards against ever assuming the wrong "completed" string: Amazon
+    // returning some as-yet-undocumented transitional status must not be
+    // silently treated as done, and must not be treated as a failure
+    // either -- only the documented terminal statuses should end the loop.
+    mockAmazonFetch({ reportStatusSequence: ['PENDING', 'SOME_NEW_TRANSITIONAL_STATUS', 'PROCESSING', 'COMPLETED'] });
+    await postSync({ startDate: '2026-08-09', endDate: '2026-08-12' });
+    const status = await waitForSyncToFinish();
+    assert.equal(status.lastSyncError, null);
+    const result = await getResult();
+    assert.equal(result.success, true);
+  });
+
+  test('gives up after the safety ceiling if the report never reaches a terminal state, without hanging forever, and clears the in-progress flag', async () => {
     globalThis.fetch = async (url, opts) => {
       const s = String(url);
       if (s.includes('/auth/o2/token')) return { ok: true, json: async () => ({ access_token: 'tok', expires_in: 3600 }) };
       if (s.includes('/sp/campaigns/list')) return { ok: true, text: async () => CAMPAIGNS_LIST_RESPONSE };
       if (s.endsWith('/reporting/reports')) return { ok: true, text: async () => JSON.stringify({ reportId: 'report-123', status: 'PENDING' }) };
-      // Never completes -- exercises the timeout path (AMAZON_REPORT_TIMEOUT_MS=150 above).
+      // Never completes -- exercises the safety-ceiling path (AMAZON_REPORT_MAX_POLL_MS=150 above).
       if (s.includes('/reporting/reports/report-123')) return { ok: true, text: async () => JSON.stringify({ status: 'PENDING' }) };
       return originalFetch(url, opts);
     };
 
-    const res = await fetch(`${baseUrl}/api/amazon/campaigns/sync`, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ startDate: '2026-08-09', endDate: '2026-08-12' }),
-    });
-    const body = await res.json();
-    assert.equal(body.success, false);
-    assert.match(body.error, /timed out/i);
-
-    // A timeout must clear the in-progress flag -- otherwise every future
-    // sync attempt would be permanently blocked by the guard below.
-    const statusRes = await fetch(`${baseUrl}/api/amazon/campaigns/status`);
-    const status = await statusRes.json();
+    await postSync({ startDate: '2026-08-09', endDate: '2026-08-12' });
+    const status = await waitForSyncToFinish();
     assert.equal(status.syncInProgress, false);
-    assert.match(status.lastSyncError, /timed out/i);
+    assert.match(status.lastSyncError, /gave up/i);
   });
 });
 
 describe('POST /api/amazon/campaigns/sync -- prevents overlapping syncs', () => {
-  test('a second sync request is rejected while the first is still waiting on Amazon, and only one report is ever requested', async () => {
+  test('a second sync request is rejected immediately while the first is still generating, and only one report is ever requested', async () => {
     let releaseFirstReportRequest;
     const gate = new Promise((resolve) => { releaseFirstReportRequest = resolve; });
     let reportRequestCount = 0;
@@ -260,7 +275,7 @@ describe('POST /api/amazon/campaigns/sync -- prevents overlapping syncs', () => 
       if (s.includes('/sp/campaigns/list')) return { ok: true, text: async () => CAMPAIGNS_LIST_RESPONSE };
       if (s.endsWith('/reporting/reports')) {
         reportRequestCount++;
-        await gate; // holds the first sync "in flight" until the test releases it
+        await gate; // holds the first sync's report-creation call open until the test releases it
         return { ok: true, text: async () => JSON.stringify({ reportId: 'report-123', status: 'PENDING' }) };
       }
       if (s.includes('/reporting/reports/report-123')) {
@@ -273,37 +288,61 @@ describe('POST /api/amazon/campaigns/sync -- prevents overlapping syncs', () => 
       return originalFetch(url, opts);
     };
 
-    const firstSync = fetch(`${baseUrl}/api/amazon/campaigns/sync`, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ startDate: '2026-08-09', endDate: '2026-08-12' }),
-    });
+    // markCampaignSyncStarted() runs synchronously before the background
+    // work is even dispatched, so syncInProgress is already true by the
+    // time this first response comes back -- no artificial delay needed
+    // to observe the guard below.
+    const { body: firstBody } = await postSync({ startDate: '2026-08-09', endDate: '2026-08-12' });
+    assert.equal(firstBody.pending, true);
 
-    // Let the first request actually reach (and get held by) the gate
-    // before firing the second one, i.e. a real double-click while the
-    // first sync is genuinely in progress.
-    await new Promise((resolve) => setTimeout(resolve, 20));
-
-    const midFlightStatus = await (await fetch(`${baseUrl}/api/amazon/campaigns/status`)).json();
+    const midFlightStatus = await getStatus();
     assert.equal(midFlightStatus.syncInProgress, true);
 
-    const secondRes = await fetch(`${baseUrl}/api/amazon/campaigns/sync`, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ startDate: '2026-08-09', endDate: '2026-08-12' }),
-    });
-    const secondBody = await secondRes.json();
+    const { body: secondBody } = await postSync({ startDate: '2026-08-09', endDate: '2026-08-12' });
     assert.equal(secondBody.success, false);
     assert.match(secondBody.error, /already in progress/i);
 
     releaseFirstReportRequest();
-    const firstBody = await (await firstSync).json();
-    assert.equal(firstBody.success, true);
+    const finalStatus = await waitForSyncToFinish();
+    assert.equal(finalStatus.lastSyncError, null);
 
     assert.equal(reportRequestCount, 1, 'the blocked second request must never trigger its own report');
-
-    const finalStatus = await (await fetch(`${baseUrl}/api/amazon/campaigns/status`)).json();
     assert.equal(finalStatus.syncInProgress, false);
+  });
+});
+
+describe('Diagnostic: a report progresses through real Amazon statuses to a downloadable/completed state', () => {
+  test('PENDING -> PROCESSING -> COMPLETED is fully observed via safe per-attempt logging and GET /status, and the report becomes downloadable', async () => {
+    const originalLog = console.log;
+    const loggedLines = [];
+    console.log = (...args) => {
+      loggedLines.push(args.map((a) => (typeof a === 'string' ? a : JSON.stringify(a))).join(' '));
+    };
+    try {
+      const calls = mockAmazonFetch({ reportStatusSequence: ['PENDING', 'PROCESSING', 'COMPLETED'] });
+      await postSync({ startDate: '2026-08-09', endDate: '2026-08-12' });
+      const status = await waitForSyncToFinish();
+      assert.equal(status.lastSyncError, null);
+      assert.equal(status.lastPolledStatus, 'COMPLETED');
+      assert.ok(status.pollAttempts >= 3, `expected at least 3 polls to observe all 3 statuses (got ${status.pollAttempts})`);
+
+      const statusPollCalls = calls.filter((c) => c.url.includes('/reporting/reports/report-123'));
+      assert.equal(statusPollCalls.length, 3, 'expected exactly one poll per documented status transition');
+
+      const result = await getResult();
+      assert.equal(result.success, true);
+      assert.ok(result.rows.length > 0, 'the completed report must actually be downloadable and produce rows');
+
+      // Safe per-attempt logging: reportId, HTTP status, Amazon status, and
+      // attempt number are present; the configured secrets never are.
+      const pollLogLines = loggedLines.filter((line) => line.includes('Amazon campaign report poll'));
+      assert.ok(pollLogLines.length >= 3, 'expected a log line for every poll attempt');
+      assert.ok(pollLogLines.some((line) => line.includes('report-123') && line.includes('attempt')));
+      assert.ok(!loggedLines.join('\n').includes('super-secret-value'), 'must never log the Client Secret');
+      assert.ok(!loggedLines.join('\n').includes('refresh-token-value'), 'must never log the refresh token');
+    } finally {
+      console.log = originalLog;
+    }
   });
 });
 
