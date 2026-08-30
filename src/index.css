@@ -1,0 +1,60 @@
+@import "tailwindcss";
+
+@theme {
+  --color-navy-950: #0b1220;
+  --color-navy-900: #0f172a;
+  --color-navy-800: #1e293b;
+  --color-navy-700: #334155;
+  --color-navy-600: #475569;
+  --color-navy-500: #64748b;
+  --color-navy-400: #94a3b8;
+
+  --color-canvas: #f7f8fa;
+  --color-surface: #ffffff;
+  --color-border-subtle: #e6e8ec;
+
+  --color-brand-600: #3b5bfd;
+  --color-brand-700: #2d46d6;
+
+  /* Soft rose accent — a restrained nod to the Zaphira beauty brand for
+     chart/data-viz use only; the rest of the interface keeps its existing
+     navy/brand palette untouched. */
+  --color-rose-600: #b8577a;
+  --color-rose-500: #cd7a97;
+  --color-rose-100: #f7e3ea;
+
+  --color-positive-600: #1c8a5b;
+  --color-positive-50: #eafaf2;
+  --color-negative-600: #cc3b3b;
+  --color-negative-50: #fdecec;
+  --color-watch-600: #b5820a;
+  --color-watch-50: #fbf3de;
+  --color-wait-600: #5b6472;
+  --color-wait-50: #eef0f3;
+
+  --font-sans: "Inter", ui-sans-serif, system-ui, -apple-system, sans-serif;
+}
+
+html, body, #root {
+  height: 100%;
+}
+
+body {
+  background-color: var(--color-canvas);
+  color: var(--color-navy-900);
+  font-family: var(--font-sans);
+  -webkit-font-smoothing: antialiased;
+}
+
+* {
+  box-sizing: border-box;
+}
+
+::-webkit-scrollbar {
+  width: 10px;
+  height: 10px;
+}
+::-webkit-scrollbar-thumb {
+  background: var(--color-navy-400);
+  border-radius: 8px;
+}

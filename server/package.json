@@ -1,0 +1,20 @@
+{
+  "name": "zaphira-amazon-ads-backend",
+  "version": "1.0.0",
+  "private": true,
+  "type": "module",
+  "description": "READ-ONLY Amazon Ads API backend for Zaphira PPC Control. Binds to 127.0.0.1 locally, 0.0.0.0 in production (Railway). Never exposes Client Secret/refresh token/access token to the browser or to logs. Contains no write/mutation endpoints against Amazon Ads.",
+  "engines": {
+    "node": ">=18.0.0"
+  },
+  "scripts": {
+    "setup": "node src/setupCredentials.js",
+    "start": "node src/index.js",
+    "test": "node --test test/"
+  },
+  "dependencies": {
+    "cors": "^2.8.5",
+    "dotenv": "^16.4.5",
+    "express": "^4.19.2"
+  }
+}

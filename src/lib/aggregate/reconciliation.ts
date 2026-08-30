@@ -1,0 +1,146 @@
+import type { ReconciliationCheck, ReconciliationStatus } from '../../types';
+
+const SMALL_DIFF_THRESHOLD = 0.05; // 5%
+const MISMATCH_THRESHOLD = 0.15; // 15%
+
+function statusFor(diffPct: number | null): ReconciliationStatus {
+  if (diffPct === null) return 'DATA_RECONCILED';
+  const abs = Math.abs(diffPct);
+  if (abs <= SMALL_DIFF_THRESHOLD) return 'DATA_RECONCILED';
+  if (abs <= MISMATCH_THRESHOLD) return 'SMALL_ATTRIBUTION_DIFFERENCE';
+  return 'DATA_MISMATCH_REVIEW_REQUIRED';
+}
+
+function check(label: string, a: number | null, b: number | null): ReconciliationCheck {
+  if (a === null || b === null || (a === 0 && b === 0)) {
+    return { label, a, b, diffPct: null, status: 'DATA_RECONCILED' };
+  }
+  const base = Math.max(Math.abs(a), Math.abs(b), 0.01);
+  const diffPct = (a - b) / base;
+  return { label, a, b, diffPct, status: statusFor(diffPct) };
+}
+
+export interface ReconciliationInputs {
+  campaignSpend: number | null;
+  targetingSpend: number | null;
+  searchTermSpend: number | null;
+  advertisedProductSpend: number | null;
+  // May arrive positive or negative depending on the caller — Sellerboard's
+  // own export convention is a signed cost. runReconciliation normalizes
+  // this to magnitude itself before comparing; callers do not need to.
+  sellerboardPpcSpend: number | null;
+}
+
+export function runReconciliation(inputs: ReconciliationInputs): ReconciliationCheck[] {
+  const checks: ReconciliationCheck[] = [];
+  checks.push(check('Campaign spend vs Targeting spend', inputs.campaignSpend, inputs.targetingSpend));
+  checks.push(check('Targeting spend vs Search Term spend', inputs.targetingSpend, inputs.searchTermSpend));
+  if (inputs.advertisedProductSpend !== null) {
+    checks.push(check('Targeting spend vs Advertised Product spend', inputs.targetingSpend, inputs.advertisedProductSpend));
+  }
+  if (inputs.sellerboardPpcSpend !== null) {
+    // Sellerboard represents PPC/advertising expense as a SIGNED cost (e.g.
+    // -23.88), while Amazon's own reports always report spend as a positive
+    // number (e.g. +23.88). Reconciling the two must compare MAGNITUDE, not
+    // raw sign, or a correctly-matching pair of figures reads as a false
+    // "DATA MISMATCH REVIEW REQUIRED". Math.abs() is applied ONLY here, at
+    // this comparison — it must never be applied to the signed value used
+    // in profit/accounting math (ProductEconomics.ppcSpend in sellerboard.ts
+    // is a separate computation for that purpose and is untouched by this).
+    checks.push(check('Campaign spend vs Sellerboard PPC spend', inputs.campaignSpend, Math.abs(inputs.sellerboardPpcSpend)));
+  }
+  return checks;
+}
+
+// Compares Amazon API-synced campaign totals against manually-uploaded
+// Campaign CSV totals for the SAME confirmed period (see
+// state/store.ts's apiCampaignSync + reportMeta.campaign/reportRows.campaign,
+// and Settings.campaignDataSource). Reuses the exact same check()
+// tolerance logic as every other reconciliation pair above (5% = small
+// attribution difference, 15% = mismatch) — no new formula, no new
+// thresholds. Never called when the periods don't match exactly; that
+// decision is made by the caller, which only invokes this once both
+// sources cover the identical requested period.
+export interface CampaignSourceTotals {
+  spend: number;
+  sales: number;
+  orders: number;
+  clicks: number;
+}
+
+export function reconcileCampaignSources(manual: CampaignSourceTotals, api: CampaignSourceTotals): ReconciliationCheck[] {
+  return [
+    check('Spend: Amazon API vs Manual Campaign CSV', api.spend, manual.spend),
+    check('Attributed Sales: Amazon API vs Manual Campaign CSV', api.sales, manual.sales),
+    check('Orders: Amazon API vs Manual Campaign CSV', api.orders, manual.orders),
+    check('Clicks: Amazon API vs Manual Campaign CSV', api.clicks, manual.clicks),
+  ];
+}
+
+// Compares Amazon API-synced targeting totals against manually-uploaded
+// Targeting CSV totals for the SAME confirmed period (see
+// state/store.ts's apiTargetingSync + reportMeta.targeting/
+// reportRows.targeting, and Settings.targetingDataSource). Reuses the
+// exact same check() tolerance logic as reconcileCampaignSources above —
+// no new formula, no new thresholds. Never called when the periods don't
+// match exactly; that decision is made by the caller.
+export interface TargetingSourceTotals {
+  spend: number;
+  sales: number;
+  orders: number;
+  clicks: number;
+}
+
+export function reconcileTargetingSources(manual: TargetingSourceTotals, api: TargetingSourceTotals): ReconciliationCheck[] {
+  return [
+    check('Spend: Amazon API vs Manual Targeting CSV', api.spend, manual.spend),
+    check('Attributed Sales: Amazon API vs Manual Targeting CSV', api.sales, manual.sales),
+    check('Orders: Amazon API vs Manual Targeting CSV', api.orders, manual.orders),
+    check('Clicks: Amazon API vs Manual Targeting CSV', api.clicks, manual.clicks),
+  ];
+}
+
+export function worstStatus(checks: ReconciliationCheck[]): ReconciliationStatus {
+  if (checks.some((c) => c.status === 'DATA_MISMATCH_REVIEW_REQUIRED')) return 'DATA_MISMATCH_REVIEW_REQUIRED';
+  if (checks.some((c) => c.status === 'SMALL_ATTRIBUTION_DIFFERENCE')) return 'SMALL_ATTRIBUTION_DIFFERENCE';
+  return 'DATA_RECONCILED';
+}
+
+// The single, authoritative status for the Dashboard's "Data reconciliation"
+// badge — deliberately a distinct, narrower type from ReconciliationStatus
+// (which stays as the finer-grained per-check / worstStatus severity level,
+// unchanged, still used wherever that granularity matters). This function
+// touches NO tolerances, NO thresholds, and NO check math — check(),
+// statusFor(), runReconciliation(), and worstStatus() above are all
+// untouched. It only decides, from runReconciliation()'s own output plus
+// the raw inputs it was given, which of three states the badge shows:
+//
+//   INSUFFICIENT_DATA           — reconciliation cannot run at all because a
+//                                  required report (Campaign or Targeting —
+//                                  every other check is anchored to these
+//                                  two) hasn't been uploaded. Never silently
+//                                  read as "reconciled".
+//   DATA_MISMATCH_REVIEW_REQUIRED — at least one check genuinely exceeds the
+//                                  mismatch threshold.
+//   DATA_RECONCILED             — every check is within tolerance (a small
+//                                  attribution-level difference alone does
+//                                  not block this badge — that's a real,
+//                                  separate severity tier still visible on
+//                                  each individual check, just not treated
+//                                  as blocking for this single badge).
+//
+// This must NEVER be combined with report-quality (DEGRADED/OK), period-
+// alignment, mapping, or delivery status — those are entirely separate
+// systems and are not read by this function at all.
+export type DashboardReconciliationStatus = 'DATA_RECONCILED' | 'DATA_MISMATCH_REVIEW_REQUIRED' | 'INSUFFICIENT_DATA';
+
+export function deriveDashboardReconciliationStatus(
+  checks: ReconciliationCheck[],
+  inputs: ReconciliationInputs,
+): DashboardReconciliationStatus {
+  if (inputs.campaignSpend === null || inputs.targetingSpend === null) {
+    return 'INSUFFICIENT_DATA';
+  }
+  const hasMismatch = checks.some((check) => check.status === 'DATA_MISMATCH_REVIEW_REQUIRED');
+  return hasMismatch ? 'DATA_MISMATCH_REVIEW_REQUIRED' : 'DATA_RECONCILED';
+}
