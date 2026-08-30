@@ -11,8 +11,10 @@ Amazon Ads.
 
 ```
 Browser UI (Zaphira PPC Control)
-    ↓ localhost only
-This local Node backend  (binds to 127.0.0.1, never 0.0.0.0)
+    ↓ HTTPS/CORS-restricted
+This Node backend
+    (127.0.0.1 in local dev — never reachable beyond the machine it runs on;
+     0.0.0.0:$PORT in production/Railway — reachable only through CORS-checked origins)
     ↓
 Amazon LWA token service (https://api.amazon.com/auth/o2/token)
     ↓
@@ -20,8 +22,10 @@ Amazon Ads API (read-only calls only)
 ```
 
 Your Amazon Client Secret, refresh token, and access token **never** reach
-the browser. They live only in this backend's local `.env.amazon.local`
-file (never committed to Git) and in this process's memory.
+the browser. They live only in this backend's environment — a local
+`.env.amazon.local` file (never committed to Git) in development, Railway
+service environment variables in production — and in this process's
+memory. See "Production deployment (Railway)" below.
 
 ## Setup
 
@@ -63,6 +67,49 @@ never reachable from another machine or the internet.
 Then, in the Zaphira PPC Control app: **Settings → Amazon Ads API → Test
 Connection**.
 
+## Production deployment (Railway)
+
+This same backend can be deployed to Railway. Nothing about its Amazon
+Ads logic changes between local and production — only how it binds to a
+port and which browser origins CORS allows.
+
+1. **Create a Railway service** from this GitHub repo, and set its
+   **Root Directory** to `server` (Railway → your service → Settings →
+   Root Directory). `server/railway.json` (picked up relative to that
+   root) tells Railway to use Nixpacks and run `npm start`, with a health
+   check against `GET /health`.
+2. **Set environment variables** on that Railway service (Settings →
+   Variables) — the same names as `.env.amazon.local.example`, but as
+   real Railway variables instead of a local file (which is never
+   deployed — it's gitignored):
+   - `AMAZON_ADS_CLIENT_ID`
+   - `AMAZON_ADS_CLIENT_SECRET`
+   - `AMAZON_ADS_REFRESH_TOKEN`
+   - `AMAZON_ADS_PROFILE_ID`
+   - `AMAZON_ADS_REGION` (`NA` unless you know otherwise)
+   - `CORS_ALLOWED_ORIGIN` — optional; defaults to
+     `https://zaphira.raedmirdas.com` if unset. Only set this if the
+     production frontend's origin is ever different from that default.
+   - Do **not** set `PORT` yourself — Railway injects it automatically,
+     and this backend binds to `0.0.0.0:$PORT` whenever `PORT` is present
+     (see `resolveListenTarget()` in `src/config.js`). Locally, where
+     `PORT` is never set, it keeps binding to `127.0.0.1:4001` exactly as
+     before.
+3. **Deploy.** Railway builds and starts the service; `GET /health`
+   should return `{"ok":true,"readOnly":true}` at the Railway-assigned
+   domain once it's live.
+4. **Point the frontend at it.** Build the frontend with
+   `VITE_AMAZON_BACKEND_URL` set to that Railway service's HTTPS URL —
+   see `.env.production.example` at the repo root. This is a build-time
+   Vite variable (never a secret) baked into the static frontend build,
+   wherever that frontend itself is hosted.
+
+Secrets never leave this backend either way: they're read only from
+server-side environment variables (a local `.env.amazon.local` file in
+development, Railway service variables in production — see
+`src/config.js`), are never returned in an API response, and are never
+part of anything the frontend build bundles.
+
 ## Read-only guarantee
 
 - `server/src/amazonClient.js` contains only `GET` requests against
@@ -86,7 +133,9 @@ Connection**.
 - The access token obtained via LWA refresh lives only in this process's
   memory (`server/src/amazonAuth.js`) — never written to disk, never sent
   to the browser.
-- CORS is restricted to `localhost`/`127.0.0.1` origins only.
+- CORS is restricted to `localhost`/`127.0.0.1` origins, plus (in
+  production) the deployed frontend's own origin — no other origin, and
+  never a wildcard. See `isAllowedOrigin()` in `src/app.js`.
 - Amazon profile IDs (and other Ads API IDs) can exceed
   `Number.MAX_SAFE_INTEGER`. This backend parses them with
   `server/src/safeJson.js` to avoid silent precision loss that could

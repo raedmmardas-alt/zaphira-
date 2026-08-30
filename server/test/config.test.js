@@ -6,7 +6,7 @@ process.env.AMAZON_ADS_CLIENT_SECRET = 'super-secret-value';
 process.env.AMAZON_ADS_REFRESH_TOKEN = 'refresh-token-value';
 process.env.AMAZON_ADS_PROFILE_ID = '1234567890123456';
 
-const { isConfigured, missingConfigKeys, maskLast4, config } = await import('../src/config.js');
+const { isConfigured, missingConfigKeys, maskLast4, config, resolveListenTarget } = await import('../src/config.js');
 
 describe('config', () => {
   test('isConfigured is true once all required keys are set', () => {
@@ -37,5 +37,27 @@ describe('config -- missing keys detection', () => {
     assert.deepEqual(missingConfigKeys(), ['AMAZON_ADS_CLIENT_SECRET']);
     assert.equal(isConfigured(), false);
     process.env.AMAZON_ADS_CLIENT_SECRET = originalSecret;
+  });
+});
+
+describe('resolveListenTarget -- production (Railway) vs local dev host/port binding', () => {
+  test('binds to 0.0.0.0:<PORT> when PORT is set (production/Railway)', () => {
+    assert.deepEqual(resolveListenTarget({ PORT: '8080' }), { host: '0.0.0.0', port: 8080 });
+  });
+
+  test('binds to 127.0.0.1:4001 by default when PORT is unset (local dev, unchanged)', () => {
+    assert.deepEqual(resolveListenTarget({}), { host: '127.0.0.1', port: config.port });
+    assert.equal(resolveListenTarget({}).port, 4001);
+  });
+
+  test('local dev still honors AMAZON_BACKEND_PORT when PORT is unset', () => {
+    // config.port is resolved once at module load from AMAZON_BACKEND_PORT,
+    // so this just confirms resolveListenTarget defers to it rather than
+    // hardcoding 4001 itself.
+    assert.equal(resolveListenTarget({}).port, config.port);
+  });
+
+  test('PORT always wins over AMAZON_BACKEND_PORT when both are present (production takes precedence)', () => {
+    assert.deepEqual(resolveListenTarget({ PORT: '3000', AMAZON_BACKEND_PORT: '9999' }), { host: '0.0.0.0', port: 3000 });
   });
 });

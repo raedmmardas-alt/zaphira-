@@ -20,8 +20,28 @@ export const config = {
   refreshToken: process.env.AMAZON_ADS_REFRESH_TOKEN ?? '',
   profileId: process.env.AMAZON_ADS_PROFILE_ID ?? '',
   region: process.env.AMAZON_ADS_REGION || 'NA',
+  // Local-dev default port -- only ever used when PORT (Railway's/most
+  // PaaS providers' convention) is unset. See resolveListenTarget() below.
   port: Number(process.env.AMAZON_BACKEND_PORT) || 4001,
+  // The deployed production frontend's origin, allowed by CORS in
+  // addition to localhost (see app.js's isAllowedOrigin()). Overridable
+  // via CORS_ALLOWED_ORIGIN so a future domain change never requires a
+  // code change; defaults to the Zaphira PPC Control production frontend.
+  corsAllowedOrigin: process.env.CORS_ALLOWED_ORIGIN || 'https://zaphira.raedmirdas.com',
 };
+
+// Resolves which host/port to bind to. Railway (like most PaaS providers)
+// injects PORT at runtime and requires binding to 0.0.0.0 to be reachable;
+// local development never sets PORT, so it keeps binding to
+// 127.0.0.1:<AMAZON_BACKEND_PORT|4001> exactly as before -- unchanged
+// local behavior. A pure function (rather than inline in index.js) so this
+// switch is unit-testable without actually opening a socket.
+export function resolveListenTarget(env = process.env) {
+  if (env.PORT) {
+    return { host: '0.0.0.0', port: Number(env.PORT) };
+  }
+  return { host: '127.0.0.1', port: config.port };
+}
 
 export function isConfigured() {
   return REQUIRED_KEYS.every((k) => !!process.env[k]);

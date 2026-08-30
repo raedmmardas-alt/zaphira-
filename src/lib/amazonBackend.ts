@@ -1,9 +1,11 @@
-// Client for the local, READ-ONLY Amazon Ads API backend (see /server).
-// This frontend NEVER holds an Amazon Client Secret, refresh token, or
-// access token -- it only ever talks to its own localhost backend over
-// plain fetch, and that backend is the sole holder of secrets. If the
-// backend isn't running, every call here resolves to a clear
-// "not connected" status rather than throwing into the UI.
+// Client for the READ-ONLY Amazon Ads API backend (see /server). This
+// frontend NEVER holds an Amazon Client Secret, refresh token, or access
+// token -- it only ever talks to this backend over plain fetch (localhost
+// in development, the deployed backend's own HTTPS URL in production --
+// see VITE_AMAZON_BACKEND_URL in vite-env.d.ts), and that backend is the
+// sole holder of secrets. If the backend isn't reachable, every call here
+// resolves to a clear "not connected" status rather than throwing into
+// the UI.
 const BACKEND_URL = import.meta.env.VITE_AMAZON_BACKEND_URL || 'http://127.0.0.1:4001';
 
 export type AmazonConnectionState = 'NOT_CONNECTED' | 'CONNECTED' | 'ERROR';
